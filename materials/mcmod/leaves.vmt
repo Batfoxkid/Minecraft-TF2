@@ -1,0 +1,6 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mcmod/leaves"
+	"$surfaceprop" "Rock"
+	$translucent 1
+}

@@ -1,0 +1,41 @@
+name: Package
+
+on:
+  push:
+    branches: master
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v1
+      
+      - name: Environments
+        run: |
+          echo "SM_VERSION=1.10" >> $GITHUB_ENV
+      
+      - name: Install
+        run: |
+          bash scripts/install.sh
+      
+      - name: Set Version
+        run: |
+          bash scripts/date.sh
+      
+      - name: Compile
+        run: |
+          mkdir -p build/addons/sourcemod/plugins
+          cd build/addons/sourcemod/scripting
+          ./spcomp -E minecraft_tf2.sp -o ../plugins/minecraft_tf2.smx
+      
+      - name: Package
+        run: |
+          bash scripts/package.sh
+      
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@master
+        with:
+          name: Minecraft-TF2-${{env.DATE_VERSION}}
+          path: ./build/package

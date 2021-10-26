@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mcmod/brick"
+	"$surfaceprop" "Rock"
+}

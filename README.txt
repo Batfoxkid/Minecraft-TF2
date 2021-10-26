@@ -1,0 +1,1 @@
+Plugin based on https://github.com/MoonlyDays/TF2_MinecraftBlocks along with reused assets

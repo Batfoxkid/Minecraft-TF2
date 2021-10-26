@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mcmod/crafting_table"
+	"$surfaceprop" "Rock"
+}
