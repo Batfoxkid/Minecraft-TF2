@@ -9,7 +9,8 @@
 
 #define	CONFIG_DL	"configs/mc/download.txt"
 #define	CONFIG_BL	"configs/mc/blocks.cfg"
-#define	CONFIG_SV	"configs/mc/%s"
+#define	CONFIG_SV	"configs/mc"
+#define	CONFIG_SVFULL	"configs/mc/%s"
 
 #define MAXTF2PLAYERS	36
 #define SAVE_DELAY	86400	// 24 hours
@@ -257,7 +258,7 @@ public void OnGameOver(Event event, const char[] name, bool dontBroadcast)
 	{
 		char filepath[PLATFORM_MAX_PATH];
 		GetCurrentMap(filepath, sizeof(filepath));
-		BuildPath(Path_SM, filepath, sizeof(filepath), CONFIG_SV, filepath);
+		BuildPath(Path_SM, filepath, sizeof(filepath), CONFIG_SVFULL, filepath);
 		SaveWorld(0, filepath, GetTime());
 	}
 }
@@ -824,7 +825,7 @@ public Action Command_Save(int client, int args)
 
 		char filepath[PLATFORM_MAX_PATH];
 		GetCurrentMap(filepath, sizeof(filepath));
-		BuildPath(Path_SM, filepath, sizeof(filepath), CONFIG_SV, filepath);
+		BuildPath(Path_SM, filepath, sizeof(filepath), CONFIG_SVFULL, filepath);
 		SaveWorld(client, filepath, GetTime());
 	}
 	else if((CvarAll.BoolValue || CheckCommandAccess(client, "sm_noclip", ADMFLAG_CHEATS)) && (CvarVote.BoolValue || CheckCommandAccess(client, "sm_vote", ADMFLAG_VOTE)))
@@ -852,7 +853,7 @@ void SaveMenu(int client, int page)
 
 	static char filepath[PLATFORM_MAX_PATH];
 	GetCurrentMap(filepath, sizeof(filepath));
-	BuildPath(Path_SM, filepath, sizeof(filepath), CONFIG_SV, filepath);
+	BuildPath(Path_SM, filepath, sizeof(filepath), CONFIG_SVFULL, filepath);
 
 	menu.AddItem(filepath, "Save World\n ", (World && World.Length>10 && AreClientCookiesCached(client)) ? ITEMDRAW_DEFAULT : ITEMDRAW_DISABLED);
 
@@ -863,20 +864,20 @@ void SaveMenu(int client, int page)
 		ArrayList list = new ArrayList(sizeof(SaveEnum));
 		FileType type;
 		static char file[PLATFORM_MAX_PATH];
-		while(dir.GetNext(file, sizeof(file), type))
+		while(dir.GetNext(save.Filepath, sizeof(save.Filepath), type))
 		{
-			if(type == FileType_File && ReplaceString(file, sizeof(file), ".txt", "", false) == 1)
+			if(type == FileType_File && ReplaceString(save.Filepath, sizeof(save.Filepath), ".txt", "", false) == 1)
 			{
-				Format(save.Filepath, sizeof(save.Filepath), "%s/%s.txt", filepath, file);
+				Format(file, sizeof(file), "%s/%s.txt", file, save.Filepath);
 				save.Stamp = GetFileTime(save.Filepath, FileTime_LastChange);
 				if(save.Stamp == -1)
 				{
-					Format(save.Display, sizeof(save.Display), "Unknown - %s", file);
+					Format(save.Display, sizeof(save.Display), "Unknown - %s", save.Filepath);
 				}
 				else
 				{
 					FormatTime(save.Display, sizeof(save.Display), "%b %d %R", save.Stamp);
-					Format(save.Display, sizeof(save.Display), "%s - %s", save.Display, file);
+					Format(save.Display, sizeof(save.Display), "%s - %s", save.Display, save.Filepath);
 				}
 
 				list.PushArray(save);
@@ -924,14 +925,26 @@ public int SaveMenuH(Menu menu, MenuAction action, int client, int choice)
 		}
 		case MenuAction_Select:
 		{
-			static char buffer[PLATFORM_MAX_PATH];
+			static char file[PLATFORM_MAX_PATH];
 			if(choice)
 			{
 				if(CheckCommandAccess(client, "sm_map", ADMFLAG_CHANGEMAP))
 				{
-					menu.GetItem(choice, buffer, sizeof(buffer));
-					if(!LoadWorld(buffer))
-						PrintToChat(client, "[SM] Failed to load save");
+					static char filepath[PLATFORM_MAX_PATH];
+					GetCurrentMap(filepath, sizeof(filepath));
+					menu.GetItem(choice, file, sizeof(file));
+					BuildPath(Path_SM, filepath, sizeof(filepath), "%s/%s/%s.txt", CONFIG_SV, filepath, file);
+					if(!LoadWorld(filepath))
+					{
+						if(CheckCommandAccess(client, "sm_rcon", ADMFLAG_RCON))
+						{
+							PrintToChat(client, "[SM] Failed to load save '%s'", filepath);
+						}
+						else
+						{
+							PrintToChat(client, "[SM] Failed to load save");
+						}
+					}
 
 					SaveMenu(client, choice);
 				}
@@ -951,15 +964,15 @@ public int SaveMenuH(Menu menu, MenuAction action, int client, int choice)
 					else
 					{
 						static char display[64];
-						menu.GetItem(choice, display, sizeof(display), _, buffer, sizeof(buffer));
+						menu.GetItem(choice, display, sizeof(display), _, file, sizeof(file));
 
 						Menu vote = new Menu(VoteMenuH, MENU_ACTIONS_ALL);
-						vote.SetTitle("%N wants to set Minecraft save to %s\nReset world and change to this save?\n ", client, buffer);
+						vote.SetTitle("%N wants to set Minecraft save to %s\nReset world and change to this save?\n ", client, file);
 
-						menu.GetItem(choice, buffer, sizeof(buffer));
+						menu.GetItem(choice, file, sizeof(file));
 
-						vote.AddItem(buffer, "Yes");
-						vote.AddItem(buffer, "No");
+						vote.AddItem(file, "Yes");
+						vote.AddItem(file, "No");
 
 						vote.DisplayVoteToAll(20);
 					}
@@ -994,8 +1007,8 @@ public int SaveMenuH(Menu menu, MenuAction action, int client, int choice)
 				}
 			}
 
-			menu.GetItem(choice, buffer, sizeof(buffer));
-			SaveWorld(client, buffer, time);
+			menu.GetItem(choice, file, sizeof(file));
+			SaveWorld(client, file, time);
 			SaveMenu(client, choice);
 		}
 	}
@@ -1013,9 +1026,11 @@ public int VoteMenuH(Menu menu, MenuAction action, int client, int choice)
 		{
 			if(!choice)
 			{
-				static char buffer[PLATFORM_MAX_PATH];
-				menu.GetItem(choice, buffer, sizeof(buffer));
-				if(!LoadWorld(buffer))
+				static char file[PLATFORM_MAX_PATH], filepath[PLATFORM_MAX_PATH];
+				GetCurrentMap(filepath, sizeof(filepath));
+				menu.GetItem(choice, file, sizeof(file));
+				BuildPath(Path_SM, filepath, sizeof(filepath), "%s/%s/%s.txt", CONFIG_SV, filepath, file);
+				if(!LoadWorld(filepath))
 					PrintToChatAll("[SM] Failed to load save");
 			}
 		}
@@ -1154,20 +1169,23 @@ public Action Transmit_Predict(int entity, int client)
 
 void BreakBlock(int client)
 {
-	int entity = GetClientAimTarget(client, false);
-	if(IsValidEntity(entity))
+	if(World)
 	{
-		int id = World.FindValue(EntIndexToEntRef(entity), WorldBlock::Ref);
-		if(id != -1)
+		int entity = GetClientAimTarget(client, false);
+		if(IsValidEntity(entity))
 		{
-			static float pos1[3], pos2[3];
-			GetClientEyePosition(client, pos1);
-			GetEntPropVector(entity, Prop_Send, "m_vecOrigin", pos2);
-			if(GetVectorDistance(pos1, pos2) < CvarRange.FloatValue + (CvarModel.FloatValue*CvarSize.FloatValue/2.0))
+			int id = World.FindValue(EntIndexToEntRef(entity), WorldBlock::Ref);
+			if(id != -1)
 			{
-				World.Erase(id);
-				RemoveEntity(entity);
-				ClientCommand(client, "playgamesound minecraft/stone2.mp3");
+				static float pos1[3], pos2[3];
+				GetClientEyePosition(client, pos1);
+				GetEntPropVector(entity, Prop_Send, "m_vecOrigin", pos2);
+				if(GetVectorDistance(pos1, pos2) < CvarRange.FloatValue + (CvarModel.FloatValue*CvarSize.FloatValue/2.0))
+				{
+					World.Erase(id);
+					RemoveEntity(entity);
+					ClientCommand(client, "playgamesound minecraft/stone2.mp3");
+				}
 			}
 		}
 	}
@@ -1175,7 +1193,7 @@ void BreakBlock(int client)
 
 void PlaceBlock(int client)
 {
-	if(Selected[client] < 0 || Selected[client] >= Blocks.Length)
+	if(!World && Selected[client] < 0 || Selected[client] >= Blocks.Length)
 		return;
 
 	static float eye[3], ang[3], pos[3];
