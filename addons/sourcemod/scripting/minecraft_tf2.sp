@@ -725,7 +725,6 @@ public Action Command_Clear(int client, int args)
 
 	OnPluginEnd();
 	OnMapStart();
-	ReplyToCommand(client, "[SM] Done");
 	return Plugin_Handled;
 }
 
@@ -820,13 +819,25 @@ public Action Command_Save(int client, int args)
 {
 	if(!client)
 	{
-		if(!World || World.Length<2)
-			return Plugin_Continue;
+		if(args > 0)
+		{
+			char file[PLATFORM_MAX_PATH], filepath[PLATFORM_MAX_PATH];
+			GetCurrentMap(filepath, sizeof(filepath));
+			GetCmdArgString(file, sizeof(file));
+			BuildPath(Path_SM, filepath, sizeof(filepath), "%s/%s/%s.txt", CONFIG_SV, filepath, file);
+			if(!LoadWorld(filepath))
+				PrintToServer("[SM] Could not find save with this name");
+		}
+		else
+		{
+			if(!World || World.Length<2)
+				return Plugin_Continue;
 
-		char filepath[PLATFORM_MAX_PATH];
-		GetCurrentMap(filepath, sizeof(filepath));
-		BuildPath(Path_SM, filepath, sizeof(filepath), CONFIG_SVFULL, filepath);
-		SaveWorld(client, filepath, GetTime());
+			char filepath[PLATFORM_MAX_PATH];
+			GetCurrentMap(filepath, sizeof(filepath));
+			BuildPath(Path_SM, filepath, sizeof(filepath), CONFIG_SVFULL, filepath);
+			SaveWorld(client, filepath, GetTime());
+		}
 	}
 	else if((CvarAll.BoolValue || CheckCommandAccess(client, "sm_noclip", ADMFLAG_CHEATS)) && (CvarVote.BoolValue || CheckCommandAccess(client, "sm_vote", ADMFLAG_VOTE)))
 	{
@@ -868,7 +879,7 @@ void SaveMenu(int client, int page)
 		{
 			if(type == FileType_File && ReplaceString(save.Filepath, sizeof(save.Filepath), ".txt", "", false) == 1)
 			{
-				Format(file, sizeof(file), "%s/%s.txt", file, save.Filepath);
+				Format(file, sizeof(file), "%s/%s.txt", filepath, save.Filepath);
 				save.Stamp = GetFileTime(save.Filepath, FileTime_LastChange);
 				if(save.Stamp == -1)
 				{
