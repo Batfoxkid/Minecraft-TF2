@@ -4,6 +4,9 @@
 #include <clientprefs>
 #include <sdkhooks>
 #include <tf2_stocks>
+#include <dhooks>
+#include <customkeyvalues>
+#include "minecraft_stats/npc_stats.sp"
 
 #pragma newdecls required
 
@@ -78,6 +81,7 @@ public Plugin myinfo =
 
 public void OnPluginStart()
 {
+	OnPluginStart_npcstats();
 	CvarLimit = CreateConVar("minecraft_edictlimit", "1900", "At what amount of edicts do we start limiting block rendering", FCVAR_NOTIFY, true, 0.0, true, 2000.0);
 	CvarSize = CreateConVar("minecraft_blocksize", "32.0", "Size of blocks in Hammer Units (when modelscale is 1.0)", FCVAR_NOTIFY, true, 0.000001);
 	CvarModel = CreateConVar("minecraft_modelscale", "1.0", "Model size of blocks", FCVAR_NOTIFY, true, 0.000001);
@@ -497,7 +501,7 @@ public int CreateBlock(const char[] model, const char[] skin, int health, bool h
 		return INVALID_ENT_REFERENCE;
 	}
 
-	int entity = CreateEntityByName("prop_dynamic_override");
+	int entity = CreateEntityByName("base_boss");
 	if(IsValidEntity(entity))
 	{
 		TeleportEntity(entity, pos, ang, NULL_VECTOR);
@@ -515,7 +519,17 @@ public int CreateBlock(const char[] model, const char[] skin, int health, bool h
 		SetEntProp(entity, Prop_Data, "m_iMaxHealth", health);
 		SetEntProp(entity, Prop_Data, "m_iHealth", health);
 		SetEntPropFloat(entity, Prop_Send, "m_flModelScale", scale);
-
+		
+		//TO SET GRAVITY TO 0
+		
+		Address pNB =         SDKCall(g_hMyNextBotPointer,       entity);
+		Address pLocomotion = SDKCall(g_hGetLocomotionInterface, pNB);
+		DHookRaw(g_hGetGravity, true, pLocomotion);
+		DHookRaw(g_hGetStepHeight, true, pLocomotion);
+		
+		// :)
+		SetEntData(entity, FindSendPropInfo("CTFBaseBoss", "m_lastHealthPercentage") + 28, false, 4, true);	
+		
 		if(hasLight)
 		{
 			int light = CreateEntityByName("light_dynamic");
@@ -544,12 +558,19 @@ public int CreateBlock(const char[] model, const char[] skin, int health, bool h
 		}
 
 		SDKHook(entity, SDKHook_OnTakeDamage, OnBlockDamaged);
+		SDKHook(entity, SDKHook_Think, Check_If_Stuck);
 		//HookSingleEntityOutput(entity, "OnBreak", OnBlockKilled, true);
 	}
 
 	return EntIndexToEntRef(entity);
 }
 
+public void Check_If_Stuck(int iNPC)
+{
+	CBaseZombieRiotNpc npc = view_as<CBaseZombieRiotNpc>(iNPC);
+	npc.SetVelocity(view_as<float>({0.0, 0.0, 0.0}));
+}
+		
 public int SwapBlock(int entity, const char[] model, const char[] skin, int health, bool hasLight, const float pos[3], const float ang[3])
 {
 	TeleportEntity(entity, pos, ang, NULL_VECTOR);
