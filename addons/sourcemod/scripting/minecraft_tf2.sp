@@ -17,11 +17,13 @@
 
 enum struct Block
 {
+	char Id[64];
 	char Name[64];
 	char Model[64];
 	char Skin[6];
 	int Health;
 	bool Light;
+	bool Rotate;
 }
 
 enum struct WorldBlock
@@ -77,7 +79,7 @@ public Plugin myinfo =
 public void OnPluginStart()
 {
 	CvarLimit = CreateConVar("minecraft_edictlimit", "1900", "At what amount of edicts do we start limiting block rendering", FCVAR_NOTIFY, true, 0.0, true, 2000.0);
-	CvarSize = CreateConVar("minecraft_blocksize", "50.0", "Size of blocks in Hammer Units (when modelscale is 1.0)", FCVAR_NOTIFY, true, 0.000001);
+	CvarSize = CreateConVar("minecraft_blocksize", "32.0", "Size of blocks in Hammer Units (when modelscale is 1.0)", FCVAR_NOTIFY, true, 0.000001);
 	CvarModel = CreateConVar("minecraft_modelscale", "1.0", "Model size of blocks", FCVAR_NOTIFY, true, 0.000001);
 	CvarOffset = CreateConVar("minecraft_offset", "0.0 0.0 0.0", "Block offset from world origin", FCVAR_NOTIFY);
 	CvarRange = CreateConVar("minecraft_range", "300.0", "Range for placing and removing blocks", _, true, 0.0);
@@ -217,14 +219,16 @@ public void OnConfigsExecuted()
 	kv.GotoFirstSubKey();
 	do
 	{
-		if(kv.GetSectionName(block.Name, sizeof(block.Name)))
+		if(kv.GetSectionName(block.Id, sizeof(block.Id)))
 		{
+			kv.GetString("name", block.Name, sizeof(block.Name), DefaultBlock.Name);
 			kv.GetString("model", block.Model, sizeof(block.Model), DefaultBlock.Model);
 			kv.GetString("skin", block.Skin, sizeof(block.Skin), DefaultBlock.Skin);
 			block.Health = kv.GetNum("health", DefaultBlock.Health);
 			block.Light = view_as<bool>(kv.GetNum("light", DefaultBlock.Light));
+			block.Rotate = view_as<bool>(kv.GetNum("rotate", DefaultBlock.Rotate));
 
-			if(StrEqual(block.Name, "default"))
+			if(StrEqual(block.Id, "default"))
 			{
 				DefaultBlock = block;
 			}
@@ -496,22 +500,21 @@ public int CreateBlock(const char[] model, const char[] skin, int health, bool h
 	int entity = CreateEntityByName("prop_dynamic_override");
 	if(IsValidEntity(entity))
 	{
-		// TODO: Get better models made so angles are possible and maybe base_boss
-		TeleportEntity(entity, pos, NULL_VECTOR, NULL_VECTOR);
+		TeleportEntity(entity, pos, ang, NULL_VECTOR);
 
 		float scale = CvarModel.FloatValue;
 
 		DispatchKeyValue(entity, "model", model);
 		DispatchKeyValue(entity, "skin", skin);
-		DispatchKeyValue(entity, "solid", "6");
+		DispatchKeyValue(entity, "solid", "2");
 		DispatchKeyValue(entity, "health", "1");
-		DispatchKeyValueFloat(entity, "modelscale", scale);
 
 		DispatchSpawn(entity);
 		ActivateEntity(entity);
 
 		SetEntProp(entity, Prop_Data, "m_iMaxHealth", health);
 		SetEntProp(entity, Prop_Data, "m_iHealth", health);
+		SetEntPropFloat(entity, Prop_Send, "m_flModelScale", scale);
 
 		if(hasLight)
 		{
@@ -549,7 +552,7 @@ public int CreateBlock(const char[] model, const char[] skin, int health, bool h
 
 public int SwapBlock(int entity, const char[] model, const char[] skin, int health, bool hasLight, const float pos[3], const float ang[3])
 {
-	TeleportEntity(entity, pos, NULL_VECTOR, NULL_VECTOR);
+	TeleportEntity(entity, pos, ang, NULL_VECTOR);
 
 	float scale = CvarModel.FloatValue;
 
@@ -998,7 +1001,7 @@ public int SaveMenuH(Menu menu, MenuAction action, int client, int choice)
 			}
 
 			int time = GetTime();
-			if(CheckCommandAccess(client, "sm_rcon", ADMFLAG_RCON))
+			if(!CheckCommandAccess(client, "sm_rcon", ADMFLAG_RCON))
 			{
 				if(AreClientCookiesCached(client))
 				{
@@ -1111,7 +1114,7 @@ void PredictBlock(int client)
 	GetClientEyePosition(client, eye);
 	GetClientEyeAngles(client, ang);
 
-	TR_TraceRayFilter(eye, ang, MASK_SOLID, RayType_Infinite, TraceEntityFilterPlayer, client); 
+	TR_TraceRayFilter(eye, ang, MASK_ALL, RayType_Infinite, TraceEntityFilterPlayer, client); 
 	TR_GetEndPosition(pos);
 
 	static char buffer[48];
@@ -1136,8 +1139,8 @@ void PredictBlock(int client)
 
 	for(int i; i<3; i++)
 	{
-		pos[i] = i==2 ? (RoundToFloor((pos[i] - offset[i]) / spread) * spread + offset[i]) : (RoundToNearest((pos[i] - offset[i]) / spread) * spread + offset[i]);
-		ang[i] = (RoundToNearest(ang[i] / 90.0) * 90.0) + 90.0;
+		pos[i] = /*i==2 ? (RoundToFloor((pos[i] - offset[i]) / spread) * spread + offset[i]) : */(RoundToNearest((pos[i] - offset[i]) / spread) * spread + offset[i]);
+		ang[i] = (RoundToNearest(ang[i] / 90.0) * 90.0)/* + 90.0*/;
 	}
 
 	if(pos[0] > 32768.0 || pos[1] > 32768.0 || pos[2] > 32768.0 || pos[0] < -32768.0 || pos[1] < -32768.0 || pos[2] < -32768.0)
@@ -1204,14 +1207,14 @@ void BreakBlock(int client)
 
 void PlaceBlock(int client)
 {
-	if(!World && Selected[client] < 0 || Selected[client] >= Blocks.Length)
+	if(!World || Selected[client] < 0 || Selected[client] >= Blocks.Length)
 		return;
 
 	static float eye[3], ang[3], pos[3];
 	GetClientEyePosition(client, eye);
 	GetClientEyeAngles(client, ang);
 
-	TR_TraceRayFilter(eye, ang, MASK_SOLID, RayType_Infinite, TraceEntityFilterPlayer, client); 
+	TR_TraceRayFilter(eye, ang, MASK_ALL, RayType_Infinite, TraceEntityFilterPlayer, client); 
 	TR_GetEndPosition(pos);
 
 	static char buffer[48];
@@ -1237,7 +1240,7 @@ void PlaceBlock(int client)
 	int cords[3];
 	for(int i; i<3; i++)
 	{
-		cords[i] = i==2 ? RoundToFloor((pos[i] - offset[i]) / spread) : RoundToNearest((pos[i] - offset[i]) / spread);
+		cords[i] = /*i==2 ? RoundToFloor((pos[i] - offset[i]) / spread) :*/ RoundToNearest((pos[i] - offset[i]) / spread);
 		pos[i] = cords[i] * spread + offset[i];
 	}
 
@@ -1277,15 +1280,22 @@ void PlaceBlock(int client)
 		}
 	}
 
+	Block block;
+	Blocks.GetArray(Selected[client], block);
 	wblock.Id = Selected[client];
 	for(int i; i<3; i++)
 	{
 		wblock.Pos[i] = cords[i];
-		wblock.Ang[i] = (RoundToNearest(ang[i] / 90.0) * 90.0) + 90.0;
+		if(block.Rotate)
+		{
+			wblock.Ang[i] = (RoundToNearest(ang[i] / 90.0) * 90.0)/* + 90.0*/;
+		}
+		else if(i == 1)
+		{
+			wblock.Ang[i] = -90.0;
+		}
 	}
 
-	Block block;
-	Blocks.GetArray(Selected[client], block);
 	wblock.Health = block.Health;
 	wblock.Light = block.Light;
 	wblock.Ref = INVALID_ENT_REFERENCE;//CreateBlock(block.Model, block.Skin, wblock.Health, block.Light, pos, wblock.Ang);
@@ -1376,12 +1386,14 @@ void SaveWorld(int client, char filepath[PLATFORM_MAX_PATH], int time)
 			file.WriteLine("Steam Account ID: %d", buffer);
 	}
 
+	Block block;
 	WorldBlock wblock;
 	int length = World.Length;
 	for(int i; i<length; i++)
 	{
 		World.GetArray(i, wblock);
-		file.WriteLine("%d;%d;%d;%d;%d;%.0f;%.0f;%.0f;%d", wblock.Id, wblock.Health, wblock.Pos[0], wblock.Pos[1], wblock.Pos[2], wblock.Ang[0], wblock.Ang[1], wblock.Ang[2], wblock.Light);
+		Blocks.GetArray(wblock.Id, block);
+		file.WriteLine("%s;%d;%d;%d;%d;%.0f;%.0f;%.0f", block.Id, wblock.Health, wblock.Pos[0], wblock.Pos[1], wblock.Pos[2], wblock.Ang[0], wblock.Ang[1], wblock.Ang[2]);
 	}
 	file.Close();
 }
@@ -1398,25 +1410,24 @@ bool LoadWorld(const char[] filepath)
 	OnPluginEnd();
 	OnMapStart();
 
+	Block block;
 	WorldBlock wblock;
 	wblock.Ref = INVALID_ENT_REFERENCE;
 	while(!file.EndOfFile())
 	{
-		static char buffer[128];
-		if(file.ReadLine(buffer, sizeof(buffer)))
+		static char buffer[256], buffers[8][32];
+		if(file.ReadLine(buffer, sizeof(buffer)) && ExplodeString(buffer, ";", buffers, sizeof(buffers), sizeof(buffers[])) == sizeof(buffers))
 		{
-			int values[9];
-			if(ExplodeStringInt(buffer, ";", values, sizeof(values)) > 7)
+			if((wblock.Id = GetBlockOfId(buffers[0], block)) != -1)
 			{
-				wblock.Id = values[0];
-				wblock.Health = values[1];
-				wblock.Pos[0] = values[2];
-				wblock.Pos[1] = values[3];
-				wblock.Pos[2] = values[4];
-				wblock.Ang[0] = float(values[5]);
-				wblock.Ang[1] = float(values[6]);
-				wblock.Ang[2] = float(values[7]);
-				wblock.Light = view_as<bool>(values[8]);
+				wblock.Health = StringToInt(buffers[1]);
+				wblock.Pos[0] = StringToInt(buffers[2]);
+				wblock.Pos[1] = StringToInt(buffers[3]);
+				wblock.Pos[2] = StringToInt(buffers[4]);
+				wblock.Ang[0] = StringToFloat(buffers[5]);
+				wblock.Ang[1] = StringToFloat(buffers[6]);
+				wblock.Ang[2] = StringToFloat(buffers[7]);
+				wblock.Light = block.Light;
 				World.PushArray(wblock);
 			}
 		}
@@ -1427,12 +1438,24 @@ bool LoadWorld(const char[] filepath)
 	return true;
 }
 
+int GetBlockOfId(const char[] id, Block block)
+{
+	int length = Blocks.Length;
+	for(int i; i<length; i++)
+	{
+		Blocks.GetArray(i, block);
+		if(StrEqual(id, block.Id))
+			return i;
+	}
+	return -1;
+}
+
 public bool TraceEntityFilterPlayer(int entity, int contentsMask, any data)
 {
 	return entity != data && IsValidEntity(entity);
 }
 
-int ExplodeStringInt(const char[] text, const char[] split, int[] buffers, int max)
+stock int ExplodeStringInt(const char[] text, const char[] split, int[] buffers, int max)
 {
 	int reloc_idx, idx, total;
 
