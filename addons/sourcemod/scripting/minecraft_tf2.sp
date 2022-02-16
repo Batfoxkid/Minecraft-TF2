@@ -4,9 +4,7 @@
 #include <clientprefs>
 #include <sdkhooks>
 #include <tf2_stocks>
-#include <dhooks>
-#include <customkeyvalues>
-#include "minecraft_stats/npc_stats.sp"
+#include <profiler>
 
 #pragma newdecls required
 
@@ -20,23 +18,26 @@
 
 enum struct Block
 {
-	char Id[64];
+	char Id[32];
 	char Name[64];
 	char Model[64];
-	char Skin[6];
+	char Skin[4];
 	int Health;
-	bool Light;
 	bool Rotate;
+	
+	Function OnSpawn;
+	Function OnThink;
 }
 
 enum struct WorldBlock
 {
 	int Id;
+	int Team;
 	int Health;
 	int Pos[3];
 	float Ang[3];
 	int Ref;
-	bool Light;
+	int Edicts;
 }
 
 enum struct BlockData
@@ -55,6 +56,8 @@ ConVar CvarModel;
 ConVar CvarOffset;
 ConVar CvarRange;
 ConVar CvarAll;
+ConVar CvarFadeMinDist;
+ConVar CvarFadeMaxDist;
 ConVar CvarVote;
 Cookie SaveDelay;
 
@@ -63,13 +66,15 @@ bool LimitedMode;
 bool IgnoreSpawn;
 Handle RenderTimer;
 
-int EntityCount;
+int FreeingEntities;
+int RenderTimers;
 int CurrentEntities;
-Handle EntityTimer;
 
 bool InMenu[MAXTF2PLAYERS];
 int PredictRef[MAXTF2PLAYERS];
 int Selected[MAXTF2PLAYERS];
+
+#include "minecraft/basic.sp"
 
 public Plugin myinfo =
 {
@@ -81,7 +86,6 @@ public Plugin myinfo =
 
 public void OnPluginStart()
 {
-	OnPluginStart_npcstats();
 	CvarLimit = CreateConVar("minecraft_edictlimit", "1900", "At what amount of edicts do we start limiting block rendering", FCVAR_NOTIFY, true, 0.0, true, 2000.0);
 	CvarSize = CreateConVar("minecraft_blocksize", "32.0", "Size of blocks in Hammer Units (when modelscale is 1.0)", FCVAR_NOTIFY, true, 0.000001);
 	CvarModel = CreateConVar("minecraft_modelscale", "1.0", "Model size of blocks", FCVAR_NOTIFY, true, 0.000001);
@@ -89,6 +93,8 @@ public void OnPluginStart()
 	CvarRange = CreateConVar("minecraft_range", "300.0", "Range for placing and removing blocks", _, true, 0.0);
 	CvarAll = CreateConVar("minecraft_allplayers", "0", "Allow everyone to press Special Attack to give build tools", _, true, 0.0, true, 1.0);
 	CvarVote = CreateConVar("minecraft_allvote", "0", "Allow everyone to with build tools to call a vote on world settings", _, true, 0.0, true, 1.0);
+	CvarFadeMinDist = CreateConVar("minecraft_fademindist", "3000.0", "Distance at which blocks starts fading", _, true, 0.0);
+	CvarFadeMaxDist = CreateConVar("minecraft_fademaxdist", "4000.0", "Distance at which blocks ends fading", _, true, 0.0);
 
 	AutoExecConfig();
 
@@ -119,12 +125,8 @@ public void OnPluginStart()
 
 public void ConVarChanged(ConVar convar, const char[] oldValue, const char[] newValue)
 {
-	if(!IgnoreSpawn)
-	{
-		IgnoreSpawn = true;
-		RequestFrame(Frame_AllowSpawn);
-	}
-
+	StartSpawning();
+	
 	if(World)
 	{
 		WorldBlock wblock;
@@ -229,9 +231,11 @@ public void OnConfigsExecuted()
 			kv.GetString("model", block.Model, sizeof(block.Model), DefaultBlock.Model);
 			kv.GetString("skin", block.Skin, sizeof(block.Skin), DefaultBlock.Skin);
 			block.Health = kv.GetNum("health", DefaultBlock.Health);
-			block.Light = view_as<bool>(kv.GetNum("light", DefaultBlock.Light));
 			block.Rotate = view_as<bool>(kv.GetNum("rotate", DefaultBlock.Rotate));
-
+			
+			block.OnSpawn = KvGetFunction(kv, "onspawn", DefaultBlock.OnSpawn);
+			block.OnThink = KvGetFunction(kv, "onthink", DefaultBlock.OnThink);
+			
 			if(StrEqual(block.Id, "default"))
 			{
 				DefaultBlock = block;
@@ -299,331 +303,217 @@ void UpdateRendering()
 {
 	if(World)
 	{
-		CurrentEntities = GetEntityCount();
+		LimitedMode = false;
+		bool empty;
 		int limit = CvarLimit.IntValue;
 		int blocks;
-		LimitedMode = false;
-
+		
 		static WorldBlock wblock;
 		int length = World.Length;
 		for(int i; i<length; i++)
 		{
 			World.GetArray(i, wblock);
-			if(wblock.Ref != INVALID_ENT_REFERENCE)
+			if(wblock.Ref == INVALID_ENT_REFERENCE)
 			{
-				if(EntRefToEntIndex(wblock.Ref) <= MaxClients)
-				{
-					// We are going to assume a kill from another instance
-					World.Erase(i);
-					i--;
-					length--;
-				}
-				continue;
+				empty = true;
 			}
-
-			blocks += wblock.Light ? 2 : 1;
+			else if(EntRefToEntIndex(wblock.Ref) <= MaxClients)
+			{
+				// We are going to assume a kill from another instance
+				World.Erase(i);
+				i--;
+				length--;
+			}
+			else
+			{
+				blocks += wblock.Edicts;
+			}
+			
 		}
-
-		LimitedMode = CurrentEntities + blocks >= limit;
-		if(blocks || CurrentEntities >= limit)
+		
+		if(empty || CurrentEntities > limit)
 		{
-			if(!IgnoreSpawn)
-			{
-				IgnoreSpawn = true;
-				RequestFrame(Frame_AllowSpawn);
-			}
-
-			static char buffer[48];
-			CvarOffset.GetString(buffer, sizeof(buffer));
-
+			StartSpawning();
+			
 			float offset[3];
-			ExplodeStringFloat(buffer, " ", offset, sizeof(offset));
-
+			GetBlockOffset(offset);
 			float spread = CvarModel.FloatValue*CvarSize.FloatValue;
-
-			IntToString(length, buffer, sizeof(buffer));
-			KeyValues kv = new KeyValues("Stuff", "title", buffer);
-			kv.SetColor("color", 0, 255, 0, 255);
-			kv.SetNum("level", 1);
-			kv.SetNum("time", 1);
-	
+			
 			int clients;
 			static float pos[MAXTF2PLAYERS][3];
 			for(int i=1; i<=MaxClients; i++)
 			{
 				if(IsClientInGame(i) && IsPlayerAlive(i))
-				{
 					GetClientAbsOrigin(i, pos[clients++]);
-					if(InMenu[i])
-						CreateDialog(i, kv, DialogType_Msg);
-				}
 			}
-			delete kv;
-
-			ArrayList list = new ArrayList(sizeof(BlockData));
-			static BlockData data;
+			
+			ArrayList list = new ArrayList(2);
+			static any data[2];
 			for(int i; i<length; i++)
 			{
 				World.GetArray(i, wblock);
 				for(int a; a<3; a++)
 				{
-					data.Pos[a] = float(wblock.Pos[a]) * spread + offset[a];
+					pos[MAXTF2PLAYERS-1][a] = float(wblock.Pos[a]) * spread + offset[a];
 				}
-
-				data.Id = i;
-				data.Score = Pow(GetVectorDistance(data.Pos, pos[0], true), -1.0);
+				
+				data[0] = i;
+				data[1] = Pow(GetVectorDistance(pos[MAXTF2PLAYERS-1], pos[0], true), -1.0);
 				for(int a=1; a<clients; a++)
 				{
-					data.Score += Pow(GetVectorDistance(data.Pos, pos[a], true), -1.0);
+					data[1] += Pow(GetVectorDistance(pos[MAXTF2PLAYERS-1], pos[a], true), -1.0);
 				}
 				list.PushArray(data);
 			}
-
+			
 			list.SortCustom(Sort_DataScore);
-
-			ArrayStack normal = new ArrayStack();
-			ArrayStack glowing = new ArrayStack();
-			for(int i; i<length; i++)
+			// TODO: Make a custom sort algorithm that gets the top X amount then stops sorting
+			// Allow the dream for tens of thousands of blocks with little lag
+			//
+			// X = (limit - CurrentEntities + FreeingEntities + blocks)
+			// Probably, 2 am brain speaking at this moment
+			
+			int i;
+			for(; i<length; i++)
 			{
 				list.GetArray(i, data);
-				World.GetArray(data.Id, wblock);
+				World.GetArray(data[0], wblock);
 				if(wblock.Ref == INVALID_ENT_REFERENCE)
 				{
-					if(CurrentEntities + blocks < limit)
+					if(CurrentEntities < limit)
 					{
-						static Block block;
-						Blocks.GetArray(wblock.Id, block);
-						if(block.Light)
+						for(int a; a<3; a++)
 						{
-							if(!glowing.Empty)
-							{
-								wblock.Ref = SwapBlock(glowing.Pop(), block.Model, block.Skin, wblock.Health, block.Light, data.Pos, wblock.Ang);
-							}
-							else if(EntityCount < limit)
-							{
-								if(!normal.Empty)
-								{
-									wblock.Ref = SwapBlock(normal.Pop(), block.Model, block.Skin, wblock.Health, block.Light, data.Pos, wblock.Ang);
-								}
-								else if(EntityCount+1 < limit)	// RemoveEntity isn't really instant...
-								{
-									wblock.Ref = CreateBlock(block.Model, block.Skin, wblock.Health, block.Light, data.Pos, wblock.Ang);
-								}
-							}
+							pos[MAXTF2PLAYERS-1][a] = float(wblock.Pos[a]) * spread + offset[a];
 						}
-						else if(!normal.Empty)
-						{
-							wblock.Ref = SwapBlock(normal.Pop(), block.Model, block.Skin, wblock.Health, block.Light, data.Pos, wblock.Ang);
-						}
-						else if(EntityCount < limit)	// RemoveEntity isn't really instant...
-						{
-							if(!glowing.Empty)
-							{
-								wblock.Ref = SwapBlock(glowing.Pop(), block.Model, block.Skin, wblock.Health, block.Light, data.Pos, wblock.Ang);
-							}
-							else
-							{
-								wblock.Ref = CreateBlock(block.Model, block.Skin, wblock.Health, block.Light, data.Pos, wblock.Ang);
-							}
-						}
-						World.SetArray(data.Id, wblock);
-						if(wblock.Light)
-							blocks--;
+						
+						// We have room for the block
+						CreateBlock(wblock, pos[MAXTF2PLAYERS-1]);
+						World.SetArray(data[0], wblock);
+					}
+					else if((CurrentEntities - FreeingEntities) < limit)
+					{
+						// We can make this block, just give it some time
+						LimitedMode = true;
+					}
+					else
+					{
+						// Free some room for this block
+						LimitedMode = true;
+						blocks--;
 					}
 				}
-				else if(CurrentEntities + blocks >= limit)
+				else if((limit - CurrentEntities + FreeingEntities + blocks) > 0)
 				{
+					// Keep this block please
+					blocks -= wblock.Edicts;
+				}
+				else
+				{
+					// We reached our limit
+					LimitedMode = true;
+					break;
+				}
+			}
+			
+			for(int a = length-1; a >= i; a--)
+			{
+				list.GetArray(a, data);
+				World.GetArray(data[0], wblock);
+				if(wblock.Ref != INVALID_ENT_REFERENCE)
+				{
+					// Make some room for new blocks
 					int entity = EntRefToEntIndex(wblock.Ref);
 					if(entity > MaxClients)
 					{
 						wblock.Health = GetEntProp(entity, Prop_Data, "m_iHealth");
-						if(wblock.Light)
-						{
-							glowing.Push(entity);
-						}
-						else
-						{
-							normal.Push(entity);
-						}
+						AcceptEntityInput(entity, "KillHierarchy");
 					}
-
+					
 					wblock.Ref = INVALID_ENT_REFERENCE;
-					World.SetArray(data.Id, wblock);
+					World.SetArray(data[0], wblock);
 				}
-
-				blocks--;
 			}
-
-			while(!normal.Empty)
-			{
-				RemoveEntity(normal.Pop());
-			}
-			while(!glowing.Empty)
-			{
-				RemoveEntity(glowing.Pop());
-			}
-			delete normal;
-			delete glowing;
+			
 			delete list;
 		}
-
+		
 		if(LimitedMode)
 		{
 			if(RenderTimer)
+			{
 				KillTimer(RenderTimer);
-
-			RenderTimer = CreateTimer(0.3, Timer_UpdateRendering);
+				RenderTimer = null;
+			}
+			
+			if(!RenderTimers)
+				RenderTimer = CreateTimer(0.3, Timer_UpdateRendering);
 		}
 	}
 }
 
 public int Sort_DataScore(int index1, int index2, Handle array, Handle hndl)
 {
-	static BlockData data1, data2;
-	GetArrayArray(array, index1, data1);
-	GetArrayArray(array, index2, data2);
-	if(data1.Score > data2.Score)
-	{
-		return 1;
-	}
-	else if(data1.Score < data2.Score || data1.Pos[0] > data2.Pos[0])
-	{
-		return -1;
-	}
-	return 1;
+	return GetArrayCell(array, index2, 1) - GetArrayCell(array, index1, 1);
 }
 
-public int CreateBlock(const char[] model, const char[] skin, int health, bool hasLight, const float pos[3], const float ang[3])
+public void CreateBlock(WorldBlock wblock, const float pos[3])
 {
-	if(EntityCount > 2046)
+	if(CurrentEntities > 2046)
 	{
 		PrintToChatAll("ENTITY LIMIT REACHED");
-		return INVALID_ENT_REFERENCE;
+		return;
 	}
-
+	
+	static Block block;
+	Blocks.GetArray(wblock.Id, block);
+	
 	int entity = CreateEntityByName("base_boss");
 	if(IsValidEntity(entity))
 	{
-		TeleportEntity(entity, pos, ang, NULL_VECTOR);
-
-		float scale = CvarModel.FloatValue;
-
-		DispatchKeyValue(entity, "model", model);
-		DispatchKeyValue(entity, "skin", skin);
-		DispatchKeyValue(entity, "solid", "2");
+		TeleportEntity(entity, pos, wblock.Ang, NULL_VECTOR);
+		
+		DispatchKeyValue(entity, "model", block.Model);
+		DispatchKeyValue(entity, "skin", block.Skin);
+		//DispatchKeyValue(entity, "solid", "2");
 		DispatchKeyValue(entity, "health", "1");
-
+		
 		DispatchSpawn(entity);
 		ActivateEntity(entity);
-
-		SetEntProp(entity, Prop_Data, "m_iMaxHealth", health);
-		SetEntProp(entity, Prop_Data, "m_iHealth", health);
-		SetEntPropFloat(entity, Prop_Send, "m_flModelScale", scale);
 		
-		//TO SET GRAVITY TO 0
+		SetEntProp(entity, Prop_Send, "m_iTeamNum", wblock.Team);
+		SetEntProp(entity, Prop_Data, "m_iMaxHealth", wblock.Health);
+		SetEntProp(entity, Prop_Data, "m_iHealth", wblock.Health);
+		SetEntPropFloat(entity, Prop_Send, "m_fadeMinDist", CvarFadeMinDist.FloatValue);
+		SetEntPropFloat(entity, Prop_Send, "m_fadeMaxDist", CvarFadeMaxDist.FloatValue);
+		SetEntPropFloat(entity, Prop_Send, "m_flModelScale", CvarModel.FloatValue);
+		SetEntData(entity, FindSendPropInfo("CTFBaseBoss", "m_lastHealthPercentage") + 28, false, 4, true);	// m_bResolvePlayerCollisions
 		
-		Address pNB =         SDKCall(g_hMyNextBotPointer,       entity);
-		Address pLocomotion = SDKCall(g_hGetLocomotionInterface, pNB);
-		DHookRaw(g_hGetGravity, true, pLocomotion);
-		DHookRaw(g_hGetStepHeight, true, pLocomotion);
+		wblock.Edicts = 1;
 		
-		// :)
-		SetEntData(entity, FindSendPropInfo("CTFBaseBoss", "m_lastHealthPercentage") + 28, false, 4, true);	
-		
-		if(hasLight)
+		if(block.OnSpawn != INVALID_FUNCTION)
 		{
-			int light = CreateEntityByName("light_dynamic");
-			if(IsValidEntity(light))
-			{
-				DispatchKeyValue(light, "_light", "250 250 200");
-				DispatchKeyValue(light, "brightness", "5");
-				DispatchKeyValueFloat(light, "spotlight_radius", 280.0);
-				DispatchKeyValueFloat(light, "distance", 180.0);
-				DispatchKeyValue(light, "style", "0");
-				DispatchSpawn(light);
-				ActivateEntity(light);
-
-				static float pos2[3];
-				pos2[0] = pos[0];
-				pos2[1] = pos[1];
-				pos2[2] = pos[2] + CvarSize.FloatValue*scale/2.0;
-				TeleportEntity(light, pos2, NULL_VECTOR, NULL_VECTOR); 
-
-				SetEntPropEnt(light, Prop_Data, "m_hOwnerEntity", entity);
-
-				SetVariantString("!activator");
-				AcceptEntityInput(light, "SetParent", entity, light);
-				AcceptEntityInput(light, "TurnOn");
-			}
+			int amount;
+			Call_StartFunction(null, block.OnSpawn);
+			Call_PushCell(entity);
+			Call_Finish(amount);
+			wblock.Edicts += amount;
 		}
-
+		
 		SDKHook(entity, SDKHook_OnTakeDamage, OnBlockDamaged);
-		SDKHook(entity, SDKHook_Think, Check_If_Stuck);
-		//HookSingleEntityOutput(entity, "OnBreak", OnBlockKilled, true);
-	}
-
-	return EntIndexToEntRef(entity);
-}
-
-public void Check_If_Stuck(int iNPC)
-{
-	CBaseZombieRiotNpc npc = view_as<CBaseZombieRiotNpc>(iNPC);
-	npc.SetVelocity(view_as<float>({0.0, 0.0, 0.0}));
-}
+		SDKHook(entity, SDKHook_SetTransmit, OnBlockTransmit);
 		
-public int SwapBlock(int entity, const char[] model, const char[] skin, int health, bool hasLight, const float pos[3], const float ang[3])
+		if(block.OnThink != INVALID_FUNCTION)
+			SDKHook(entity, SDKHook_Think, view_as<SDKHookCB>(block.OnThink));
+		
+		wblock.Ref = EntIndexToEntRef(entity);
+	}
+}
+
+public Action OnBlockTransmit(int entity, int client)
 {
-	TeleportEntity(entity, pos, ang, NULL_VECTOR);
-
-	float scale = CvarModel.FloatValue;
-
-	SetEntityModel(entity, model);
-	SetEntProp(entity, Prop_Send, "m_nSkin", StringToInt(skin));
-
-	SetEntProp(entity, Prop_Data, "m_iMaxHealth", health);
-	SetEntProp(entity, Prop_Data, "m_iHealth", health);
-	SetEntPropFloat(entity, Prop_Send, "m_flModelScale", scale);
-
-	int light = -1;
-	while((light=FindEntityByClassname(light, "light_dynamic")) != -1)
-	{
-		if(GetEntPropEnt(light, Prop_Data, "m_hOwnerEntity") == entity)
-			break;
-	}
-
-	if(hasLight)
-	{
-		light = CreateEntityByName("light_dynamic");  
-		if(IsValidEntity(light))    
-		{
-			DispatchKeyValue(light, "_light", "250 250 200");  
-			DispatchKeyValue(light, "brightness", "5");  
-			DispatchKeyValueFloat(light, "spotlight_radius", 280.0);  
-			DispatchKeyValueFloat(light, "distance", 180.0);
-			DispatchKeyValue(light, "style", "0");   
-			DispatchSpawn(light);
-			ActivateEntity(light);
-
-			static float pos2[3];
-			pos2[0] = pos[0];
-			pos2[1] = pos[1];
-			pos2[2] = pos[2] + CvarSize.FloatValue*scale/2.0;
-			TeleportEntity(light, pos2, NULL_VECTOR, NULL_VECTOR); 
-
-			SetEntPropEnt(light, Prop_Data, "m_hOwnerEntity", entity);
-
-			SetVariantString("!activator");
-			AcceptEntityInput(light, "SetParent", entity, light);
-			AcceptEntityInput(light, "TurnOn");
-		}
-	}
-	else if(light != -1)
-	{
-		AcceptEntityInput(light, "TurnOff");
-		RemoveEntity(light);
-	}
-
-	return EntIndexToEntRef(entity);
+	SetEdictFlags(entity, GetEdictFlags(entity) & ~FL_EDICT_ALWAYS);
+	return Plugin_Changed;
 }
 
 public Action OnBlockDamaged(int entity, int &attacker, int &inflictor, float &damage, int &damagetype, int &weapon, float damageForce[3], float damagePosition[3], int damagecustom)
@@ -691,14 +581,14 @@ public void OnEntityCreated(int entity, const char[] classname)
 	if(entity > CurrentEntities)
 		CurrentEntities = entity;
 
-	if(entity > EntityCount)	// Due to GetEntityCount() not exactly getting everything
+	/*if(entity > EntityCount)	// Due to GetEntityCount() not exactly getting everything
 	{
 		EntityCount = entity;
 		if(EntityTimer)
 			KillTimer(EntityTimer);
 
 		EntityTimer = CreateTimer(2.0, Timer_CheckEntity);
-	}
+	}*/
 
 	/*if(BlockMoney && StrEqual(classname, "item_currencypack_custom"))
 	{
@@ -713,11 +603,36 @@ public void OnEntityCreated(int entity, const char[] classname)
 
 public void OnEntityDestroyed(int entity)
 {
-	if(!IgnoreSpawn && LimitedMode)
-		UpdateRendering();
+	// In Source Engine, edicts won't get reallocated for 1 second after being freed
+	FreeingEntities++;
+	
+	bool render;
+	if(LimitedMode)
+	{
+		float gameTime = GetGameTime();
+		static float lastRenderRequest;
+		if(lastRenderRequest < gameTime)
+		{
+			lastRenderRequest = gameTime + 0.1;
+			render = true;
+			RenderTimers++;
+		}
+	}
+	
+	CreateTimer(1.01, Timer_FreeEdict, render);
+}
 
-	if(!EntityTimer)
-		EntityTimer = CreateTimer(2.0, Timer_CheckEntity);
+public Action Timer_FreeEdict(Handle timer, bool render)
+{
+	FreeingEntities--;
+	CurrentEntities--;
+	if(render)
+	{
+		RenderTimers--;
+		if(LimitedMode)
+			UpdateRendering();
+	}
+	return Plugin_Continue;
 }
 
 public void Frame_AllowSpawn(int entity)
@@ -725,12 +640,12 @@ public void Frame_AllowSpawn(int entity)
 	IgnoreSpawn = false;
 }
 
-public Action Timer_CheckEntity(Handle timer)
+/*public Action Timer_CheckEntity(Handle timer)
 {
 	EntityTimer = null;
-	EntityCount = GetEntityCount();
+	EntityCount = GetEntitySlots();
 	return Plugin_Continue;
-}
+}*/
 
 /*public Action OnCashSpawn(int entity)
 {
@@ -744,9 +659,7 @@ public void OnCashSpawnPost(int entity)
 
 public Action Command_Clear(int client, int args)
 {
-	if(!IgnoreSpawn)
-		RequestFrame(Frame_AllowSpawn);
-
+	StartSpawning();
 	OnPluginEnd();
 	OnMapStart();
 	return Plugin_Handled;
@@ -904,7 +817,7 @@ void SaveMenu(int client, int page)
 			if(type == FileType_File && ReplaceString(save.Filepath, sizeof(save.Filepath), ".txt", "", false) == 1)
 			{
 				Format(file, sizeof(file), "%s/%s.txt", filepath, save.Filepath);
-				save.Stamp = GetFileTime(save.Filepath, FileTime_LastChange);
+				save.Stamp = GetFileTime(file, FileTime_LastChange);
 				if(save.Stamp == -1)
 				{
 					Format(save.Display, sizeof(save.Display), "Unknown - %s", save.Filepath);
@@ -1138,12 +1051,8 @@ void PredictBlock(int client)
 	TR_TraceRayFilter(eye, ang, MASK_ALL, RayType_Infinite, TraceEntityFilterPlayer, client); 
 	TR_GetEndPosition(pos);
 
-	static char buffer[48];
-	CvarOffset.GetString(buffer, sizeof(buffer));
-
 	float offset[3];
-	ExplodeStringFloat(buffer, " ", offset, sizeof(offset));
-
+	GetBlockOffset(offset);
 	float scale = CvarModel.FloatValue;
 	float spread = scale*CvarSize.FloatValue;
 
@@ -1238,12 +1147,8 @@ void PlaceBlock(int client)
 	TR_TraceRayFilter(eye, ang, MASK_ALL, RayType_Infinite, TraceEntityFilterPlayer, client); 
 	TR_GetEndPosition(pos);
 
-	static char buffer[48];
-	CvarOffset.GetString(buffer, sizeof(buffer));
-
 	float offset[3];
-	ExplodeStringFloat(buffer, " ", offset, sizeof(offset));
-
+	GetBlockOffset(offset);
 	float spread = CvarModel.FloatValue*CvarSize.FloatValue;
 
 	float range = CvarRange.FloatValue;
@@ -1317,12 +1222,19 @@ void PlaceBlock(int client)
 		}
 	}
 
+	wblock.Team = GetClientTeam(client);
 	wblock.Health = block.Health;
-	wblock.Light = block.Light;
-	wblock.Ref = INVALID_ENT_REFERENCE;//CreateBlock(block.Model, block.Skin, wblock.Health, block.Light, pos, wblock.Ang);
-
+	if(CurrentEntities < 2030)
+	{
+		// Yes were creating pass our limit but for good reason
+		CreateBlock(wblock, pos);
+	}
+	else
+	{
+		wblock.Ref = INVALID_ENT_REFERENCE;
+	}
+	
 	World.PushArray(wblock);
-	UpdateRendering();
 
 	ClientCommand(client, "playgamesound minecraft/stone1.mp3");
 }
@@ -1414,7 +1326,7 @@ void SaveWorld(int client, char filepath[PLATFORM_MAX_PATH], int time)
 	{
 		World.GetArray(i, wblock);
 		Blocks.GetArray(wblock.Id, block);
-		file.WriteLine("%s;%d;%d;%d;%d;%.0f;%.0f;%.0f", block.Id, wblock.Health, wblock.Pos[0], wblock.Pos[1], wblock.Pos[2], wblock.Ang[0], wblock.Ang[1], wblock.Ang[2]);
+		file.WriteLine("%s;%d;%d;%d;%d;%.0f;%.0f;%.0f;%d", block.Id, wblock.Health, wblock.Pos[0], wblock.Pos[1], wblock.Pos[2], wblock.Ang[0], wblock.Ang[1], wblock.Ang[2], wblock.Team);
 	}
 	file.Close();
 }
@@ -1425,9 +1337,7 @@ bool LoadWorld(const char[] filepath)
 	if(!file)
 		return false;
 
-	if(!IgnoreSpawn)
-		RequestFrame(Frame_AllowSpawn);
-
+	StartSpawning();
 	OnPluginEnd();
 	OnMapStart();
 
@@ -1436,7 +1346,7 @@ bool LoadWorld(const char[] filepath)
 	wblock.Ref = INVALID_ENT_REFERENCE;
 	while(!file.EndOfFile())
 	{
-		static char buffer[256], buffers[8][32];
+		static char buffer[256], buffers[9][32];
 		if(file.ReadLine(buffer, sizeof(buffer)) && ExplodeString(buffer, ";", buffers, sizeof(buffers), sizeof(buffers[])) == sizeof(buffers))
 		{
 			if((wblock.Id = GetBlockOfId(buffers[0], block)) != -1)
@@ -1448,7 +1358,7 @@ bool LoadWorld(const char[] filepath)
 				wblock.Ang[0] = StringToFloat(buffers[5]);
 				wblock.Ang[1] = StringToFloat(buffers[6]);
 				wblock.Ang[2] = StringToFloat(buffers[7]);
-				wblock.Light = block.Light;
+				wblock.Team = StringToInt(buffers[8]);
 				World.PushArray(wblock);
 			}
 		}
@@ -1527,4 +1437,30 @@ void ConstrainDistance(const float start[3], float end[3], float distance, float
 	{
 		end[i] = ((end[i] - start[i]) * factor) + start[i];
 	}
+}
+
+void StartSpawning()
+{
+	if(!IgnoreSpawn)
+	{
+		IgnoreSpawn = true;
+		RequestFrame(Frame_AllowSpawn);
+	}
+}
+
+void GetBlockOffset(float offset[3])
+{
+	static char buffer[48];
+	CvarOffset.GetString(buffer, sizeof(buffer));
+	ExplodeStringFloat(buffer, " ", offset, sizeof(offset));
+}
+
+Function KvGetFunction(Handle kv, const char[] key, Function defvalue=INVALID_FUNCTION)
+{
+	static char buffer[48];
+	KvGetString(kv, key, buffer, sizeof(buffer), "1");
+	if(buffer[0] == '1')
+		return defvalue;
+	
+	return GetFunctionByName(null, buffer);
 }
