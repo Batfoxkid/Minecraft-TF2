@@ -3,12 +3,7 @@ public Action Think_None(int entity)
 	return Plugin_Handled;
 }
 
-public Action Think_Sand(int entity)
-{
-	return Plugin_Continue;
-}
-
-public int Spawn_Light(int entity)
+public int Spawn_Light(int entity, int &flags)
 {
 	int light = CreateEntityByName("light_dynamic");
 	if(IsValidEntity(light))

@@ -16,28 +16,44 @@
 #define MAXTF2PLAYERS	36
 #define SAVE_DELAY	86400	// 24 hours
 
+enum PosOffset
+{
+	Pos_Unknown = -1,
+	Pos_XUp,
+	Pos_XDown,
+	Pos_YUp,
+	Pos_YDown,
+	Pos_ZUp,
+	Pos_ZDown
+}
+
 enum struct Block
 {
 	char Id[32];
 	char Name[64];
-	char Model[64];
+	char Model[PLATFORM_MAX_PATH];
 	char Skin[4];
 	int Health;
 	bool Rotate;
 	
 	Function OnSpawn;
 	Function OnThink;
+	Function OnNotice;
+	
+	int Inv[MAXTF2PLAYERS];
 }
 
 enum struct WorldBlock
 {
 	int Id;
 	int Team;
+	int Owner;
 	int Health;
 	int Pos[3];
 	float Ang[3];
 	int Ref;
 	int Edicts;
+	int Flags;
 }
 
 enum struct BlockData
@@ -64,17 +80,21 @@ Cookie SaveDelay;
 //bool BlockMoney;
 bool LimitedMode;
 bool IgnoreSpawn;
+bool OffsetCached;
 Handle RenderTimer;
 
 int FreeingEntities;
 int RenderTimers;
 int CurrentEntities;
 
+bool Creative[MAXTF2PLAYERS];
 bool InMenu[MAXTF2PLAYERS];
 int PredictRef[MAXTF2PLAYERS];
 int Selected[MAXTF2PLAYERS];
+int InPage[MAXTF2PLAYERS];
 
 #include "minecraft/basic.sp"
+#include "minecraft/sand.sp"
 
 public Plugin myinfo =
 {
@@ -83,6 +103,15 @@ public Plugin myinfo =
 	author		=	"Batfoxkid",
 	version		=	"manual"
 };
+
+public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max)
+{
+	CreateNative("MC_OpenMenu", Native_OpenMenu);
+	CreateNative("MC_CloseMenu", Native_CloseMenu);
+	CreateNative("MC_GetBlockInv", Native_GetBlockInv);
+	CreateNative("MC_SetBlockInv", Native_SetBlockInv);
+	return APLRes_Success;
+}
 
 public void OnPluginStart()
 {
@@ -125,6 +154,7 @@ public void OnPluginStart()
 
 public void ConVarChanged(ConVar convar, const char[] oldValue, const char[] newValue)
 {
+	OffsetCached = false;
 	StartSpawning();
 	
 	if(World)
@@ -156,6 +186,8 @@ public void OnMapStart()
 {
 	OnMapEnd();
 	World = new ArrayList(sizeof(WorldBlock));
+	AddFileToDownloadsTable("sound/minecraft/stone1.mp3");
+	AddFileToDownloadsTable("sound/minecraft/stone2.mp3");
 }
 
 public void OnMapEnd()
@@ -195,32 +227,18 @@ public void OnPluginEnd()
 
 public void OnConfigsExecuted()
 {
-	int table = FindStringTable("downloadables");
-	bool save = LockStringTables(false);
-
-	char buffer[PLATFORM_MAX_PATH];
-	BuildPath(Path_SM, buffer, sizeof(buffer), CONFIG_DL);
-	File file = OpenFile(buffer, "r");
-	while(!file.EndOfFile())
-	{
-		file.ReadLine(buffer, sizeof(buffer));
-		ReplaceString(buffer, sizeof(buffer), "\n", "");
-		AddToStringTable(table, buffer);
-	}
-	file.Close();
-
-	LockStringTables(save);
-
-
 	if(Blocks)
 		delete Blocks;
-
+	
 	Blocks = new ArrayList(sizeof(Block));
-
+	
+	int table = FindStringTable("downloadables");
+	
+	char buffer[PLATFORM_MAX_PATH];
 	BuildPath(Path_SM, buffer, sizeof(buffer), CONFIG_BL);
 	KeyValues kv = new KeyValues("Blocks");
 	kv.ImportFromFile(buffer);
-
+	
 	Block block;
 	kv.GotoFirstSubKey();
 	do
@@ -235,6 +253,7 @@ public void OnConfigsExecuted()
 			
 			block.OnSpawn = KvGetFunction(kv, "onspawn", DefaultBlock.OnSpawn);
 			block.OnThink = KvGetFunction(kv, "onthink", DefaultBlock.OnThink);
+			block.OnNotice = KvGetFunction(kv, "onnotice", DefaultBlock.OnNotice);
 			
 			if(StrEqual(block.Id, "default"))
 			{
@@ -245,11 +264,92 @@ public void OnConfigsExecuted()
 				PrecacheModel(block.Model);
 				Blocks.PushArray(block);
 			}
+			
+			if(kv.JumpToKey("downloads"))
+			{
+				if(kv.GotoFirstSubKey(false))
+				{
+					bool save = LockStringTables(false);
+					
+					do
+					{
+						if(kv.GetSectionName(buffer, sizeof(buffer)))
+						{
+							kv.GetString(NULL_STRING, block.Skin, sizeof(block.Skin));
+							if(!StrContains(block.Skin, "mdl"))
+							{
+								static const char Exts[][] = {"dx80.vtx", "dx90.vtx", "mdl", "phy", "vvd"};
+								for(int i; i<sizeof(Exts); i++)
+								{
+									FormatEx(block.Model, sizeof(block.Model), "%s.%s", buffer, Exts[i]);
+									if(FileExists(block.Model, true))
+									{
+										AddToStringTable(table, block.Model);
+									}
+									else
+									{
+										LogError("File '%s' not found", block.Model);
+									}
+								}
+							}
+							else if(!StrContains(block.Skin, "mat"))
+							{
+								static const char Exts[][] = {"vtf", "vmt"};
+								for(int i; i<sizeof(Exts); i++)
+								{
+									FormatEx(block.Model, sizeof(block.Model), "%s.%s", buffer, Exts[i]);
+									if(FileExists(block.Model, true))
+									{
+										AddToStringTable(table, block.Model);
+									}
+									else
+									{
+										LogError("File '%s' not found", block.Model);
+									}
+								}
+							}
+							else if(FileExists(buffer, true))
+							{
+								AddToStringTable(table, buffer);
+							}
+							else
+							{
+								LogError("File '%s' not found", buffer);
+							}
+						}
+					} while(kv.GotoNextKey(false));
+					
+					kv.GoBack();
+					LockStringTables(save);
+				}
+				kv.GoBack();
+			}
 		}
 	} while(kv.GotoNextKey());
 	delete kv;
-
+	
 	PrintToConsoleAll("Reloaded Minecraft with %d blocks", Blocks.Length);
+}
+
+public void OnClientDisconnect(int client)
+{
+	InPage[client] = 0;
+	
+	if(Blocks)
+	{
+		static Block block;
+		int length = Blocks.Length;
+		for(int i; i<length; i++)
+		{
+			Blocks.GetArray(i, block);
+			if(block.Inv[client])
+			{
+				block.Inv[client] = 0;
+				Blocks.SetArray(i, block);
+			}
+		}
+	}
+	
 }
 
 public void OnMapRefresh(Event event, const char[] name, bool dontBroadcast)
@@ -259,9 +359,12 @@ public void OnMapRefresh(Event event, const char[] name, bool dontBroadcast)
 
 public void OnPlayerSpawn(Event event, const char[] name, bool dontBroadcast)
 {
-	int client = GetClientOfUserId(event.GetInt("userid"));
-	if(client && CvarAll.BoolValue)
-		PrintToChat(client, "[SM] Use /mc to build blocks");
+	if(CvarAll.BoolValue)
+	{
+		int client = GetClientOfUserId(event.GetInt("userid"));
+		if(client)
+			PrintToChat(client, "[SM] Use /mc to build blocks");
+	}
 }
 
 public void OnGameOver(Event event, const char[] name, bool dontBroadcast)
@@ -475,7 +578,6 @@ public void CreateBlock(WorldBlock wblock, const float pos[3])
 		
 		DispatchKeyValue(entity, "model", block.Model);
 		DispatchKeyValue(entity, "skin", block.Skin);
-		//DispatchKeyValue(entity, "solid", "2");
 		DispatchKeyValue(entity, "health", "1");
 		
 		DispatchSpawn(entity);
@@ -487,15 +589,17 @@ public void CreateBlock(WorldBlock wblock, const float pos[3])
 		SetEntPropFloat(entity, Prop_Send, "m_fadeMinDist", CvarFadeMinDist.FloatValue);
 		SetEntPropFloat(entity, Prop_Send, "m_fadeMaxDist", CvarFadeMaxDist.FloatValue);
 		SetEntPropFloat(entity, Prop_Send, "m_flModelScale", CvarModel.FloatValue);
-		SetEntData(entity, FindSendPropInfo("CTFBaseBoss", "m_lastHealthPercentage") + 28, false, 4, true);	// m_bResolvePlayerCollisions
+		SetEntData(entity, FindSendPropInfo("CTFBaseBoss", "m_lastHealthPercentage") + 28, false, 4);	// m_bResolvePlayerCollisions
 		
 		wblock.Edicts = 1;
+		wblock.Flags = 0;
 		
 		if(block.OnSpawn != INVALID_FUNCTION)
 		{
 			int amount;
 			Call_StartFunction(null, block.OnSpawn);
 			Call_PushCell(entity);
+			Call_PushCellRef(wblock.Flags);
 			Call_Finish(amount);
 			wblock.Edicts += amount;
 		}
@@ -518,40 +622,45 @@ public Action OnBlockTransmit(int entity, int client)
 
 public Action OnBlockDamaged(int entity, int &attacker, int &inflictor, float &damage, int &damagetype, int &weapon, float damageForce[3], float damagePosition[3], int damagecustom)
 {
-	if(attacker < 1 || attacker > MaxClients)
-		return Plugin_Continue;
-
 	int dmg = RoundToNearest(damage);
 	int health = GetEntProp(entity, Prop_Data, "m_iHealth") - dmg;
 	if(health < 0)
 		health = 0;
-
-	Event event = CreateEvent("npc_hurt", true);
-	event.SetInt("entindex", entity);
-	event.SetInt("health", health);
-	event.SetInt("damageamount", dmg);
-	event.SetBool("crit", view_as<bool>(damagetype & DMG_CRIT));
-	event.SetInt("attacker_player", GetClientUserId(attacker));
-	event.SetInt("weaponid", weapon);
-	event.Fire();
-
+	
+	if(attacker > 0 && attacker <= MaxClients)
+	{
+		Event event = CreateEvent("npc_hurt", true);
+		event.SetInt("entindex", entity);
+		event.SetInt("health", health);
+		event.SetInt("damageamount", dmg);
+		event.SetBool("crit", view_as<bool>(damagetype & DMG_CRIT));
+		event.SetInt("attacker_player", GetClientUserId(attacker));
+		event.SetInt("weaponid", weapon);
+		event.Fire();
+	}
+	
 	if(health)
 	{
 		SetEntProp(entity, Prop_Data, "m_iHealth", health);
 	}
 	else
 	{
-		int ref = EntIndexToEntRef(entity);
-		int id = World.FindValue(ref, WorldBlock::Ref);
+		int id = World.FindValue(EntIndexToEntRef(entity), WorldBlock::Ref);
 		if(id != -1)
+		{
+			WorldBlock wblock;
+			World.GetArray(id, wblock);
+			CallBlockNotice(wblock.Pos, false);
+			
 			World.Erase(id);
-
+		}
+		
 		RemoveEntity(entity);
 	}
-
+	
 	/*SetVariantInt(dmg);
 	FireEntityOutput(entity, "RemoveHealth", attacker, 0.0);
-
+	
 	SDKHooks_TakeDamage(entity, inflictor, attacker, damage, DMG_GENERIC, -1, damageForce, damagePosition);
 	return Plugin_Handled;*/
 	return Plugin_Handled;
@@ -687,8 +796,9 @@ public Action Command_Tool(int client, int args)
 			if(IsClientSourceTV(targets[target]) || IsClientReplay(targets[target]))
 				continue;
 
+			Creative[targets[target]] = true;
 			InMenu[targets[target]] = true;
-			ToolMenu(targets[target], 0);
+			ToolMenu(targets[target]);
 			PrintToChatAll("[SM] %N gave %N building tools", client, targets[target]);
 		}
 	}
@@ -698,8 +808,9 @@ public Action Command_Tool(int client, int args)
 	}
 	else if(CvarAll.BoolValue || CheckCommandAccess(client, "sm_noclip", ADMFLAG_CHEATS))
 	{
+		Creative[client] = true;
 		InMenu[client] = true;
-		ToolMenu(client, 0);
+		ToolMenu(client);
 	}
 	else
 	{
@@ -708,20 +819,43 @@ public Action Command_Tool(int client, int args)
 	return Plugin_Handled;
 }
 
-void ToolMenu(int client, int page)
+void ToolMenu(int client)
 {
 	Menu menu = new Menu(ToolMenuH);
 	menu.SetTitle("Minecraft: Build\n ");
-
+	
 	Block block;
+	char num[12], buffer[64];
+	int count;
 	int length = Blocks.Length;
 	for(int i; i<length; i++)
 	{
 		Blocks.GetArray(i, block);
-		menu.AddItem(block.Name, block.Name, Selected[client]==i ? ITEMDRAW_DISABLED : ITEMDRAW_DEFAULT);
+		if(Creative[client] || block.Inv[client] > 0)
+		{
+			count++;
+			IntToString(i, num, sizeof(num));
+			if(Creative[client])
+			{
+				menu.AddItem(num, block.Name, Selected[client]==i ? ITEMDRAW_DISABLED : ITEMDRAW_DEFAULT);
+			}
+			else
+			{
+				FormatEx(buffer, sizeof(buffer), "%s (x%d)", block.Name, block.Inv[client]);
+				menu.AddItem(num, block.Name, Selected[client]==i ? ITEMDRAW_DISABLED : ITEMDRAW_DEFAULT);
+				if(Selected[client] == -1)
+					Selected[client] = i;
+			}
+		}
 	}
-
-	menu.DisplayAt(client, (page/7)*7, MENU_TIME_FOREVER);
+	
+	if(!count)
+		menu.AddItem("-1", "None", ITEMDRAW_DISABLED);
+	
+	if(InPage[client] > count)
+		InPage[client] = count;
+	
+	menu.DisplayAt(client, (InPage[client]/7)*7, MENU_TIME_FOREVER);
 }
 
 public int ToolMenuH(Menu menu, MenuAction action, int client, int choice)
@@ -734,6 +868,7 @@ public int ToolMenuH(Menu menu, MenuAction action, int client, int choice)
 		}
 		case MenuAction_Cancel:
 		{
+			Creative[client] = false;
 			InMenu[client] = false;
 			if(PredictRef[client] != INVALID_ENT_REFERENCE)
 			{
@@ -746,8 +881,12 @@ public int ToolMenuH(Menu menu, MenuAction action, int client, int choice)
 		}
 		case MenuAction_Select:
 		{
-			Selected[client] = choice;
-			ToolMenu(client, choice);
+			char buffer[12];
+			menu.GetItem(choice, buffer, sizeof(buffer));
+			Selected[client] = StringToInt(buffer);
+			
+			InPage[client] = choice;
+			ToolMenu(client);
 		}
 	}
 }
@@ -992,8 +1131,9 @@ public Action OnPlayerRunCmd(int client, int &buttons)
 	{
 		if((buttons & IN_ATTACK3) && CvarAll.BoolValue)
 		{
+			Creative[client] = true;
 			InMenu[client] = true;
-			ToolMenu(client, 0);
+			ToolMenu(client);
 			holding[client] = IN_ATTACK3;
 			buttons &= ~IN_ATTACK3;
 			return Plugin_Changed;
@@ -1079,19 +1219,19 @@ void PredictBlock(int client)
 	int entity = EntRefToEntIndex(PredictRef[client]);
 	if(entity > MaxClients)
 	{
-		TeleportEntity(entity, pos, NULL_VECTOR, NULL_VECTOR);
+		TeleportEntity(entity, pos, ang, NULL_VECTOR);
 	}
 	else
 	{
 		entity = CreateEntityByName("tf_taunt_prop");
 		if(IsValidEntity(entity))
 		{
-			// TODO: Get better models made so angles are possible
-			TeleportEntity(entity, pos, NULL_VECTOR, NULL_VECTOR);
+			TeleportEntity(entity, pos, ang, NULL_VECTOR);
 
 			SetEntityModel(entity, DefaultBlock.Model);
 			SetEntProp(entity, Prop_Send, "m_nSkin", StringToInt(DefaultBlock.Skin));
 			SetEntPropFloat(entity, Prop_Send, "m_flModelScale", scale);
+			SetEntProp(entity, Prop_Send, "m_CollisionGroup", 0);
 
 			DispatchSpawn(entity);
 			ActivateEntity(entity);
@@ -1100,6 +1240,7 @@ void PredictBlock(int client)
 			SetEntityRenderColor(entity, 100, 10, 10, 100);
 			SetEntPropEnt(entity, Prop_Data, "m_hOwnerEntity", client);
 			SDKHook(entity, SDKHook_SetTransmit, Transmit_Predict);
+			SDKHook(entity, SDKHook_ShouldCollide, ShouldCollide_None);
 
 			PredictRef[client] = EntIndexToEntRef(entity);
 		}
@@ -1109,6 +1250,11 @@ void PredictBlock(int client)
 public Action Transmit_Predict(int entity, int client)
 {
 	return GetEntPropEnt(entity, Prop_Data, "m_hOwnerEntity") == client ? Plugin_Continue : Plugin_Stop;
+}
+
+public bool ShouldCollide_None(int entity, int collisiongroup, int contentsmask, bool originalResult)
+{
+	return false;
 }
 
 void BreakBlock(int client)
@@ -1121,14 +1267,29 @@ void BreakBlock(int client)
 			int id = World.FindValue(EntIndexToEntRef(entity), WorldBlock::Ref);
 			if(id != -1)
 			{
-				static float pos1[3], pos2[3];
-				GetClientEyePosition(client, pos1);
-				GetEntPropVector(entity, Prop_Send, "m_vecOrigin", pos2);
-				if(GetVectorDistance(pos1, pos2) < CvarRange.FloatValue + (CvarModel.FloatValue*CvarSize.FloatValue/2.0))
+				static WorldBlock wblock;
+				World.GetArray(id, wblock);
+				if(Creative[client] || GetClientOfUserId(wblock.Owner) == client)
 				{
-					World.Erase(id);
-					RemoveEntity(entity);
-					ClientCommand(client, "playgamesound minecraft/stone2.mp3");
+					static float pos1[3], pos2[3];
+					GetClientEyePosition(client, pos1);
+					GetEntPropVector(entity, Prop_Send, "m_vecOrigin", pos2);
+					if(GetVectorDistance(pos1, pos2) < CvarRange.FloatValue + (CvarModel.FloatValue*CvarSize.FloatValue/2.0))
+					{
+						CallBlockNotice(wblock.Pos, false);
+						World.Erase(id);
+						RemoveEntity(entity);
+						ClientCommand(client, "playgamesound minecraft/stone2.mp3");
+						if(!Creative[client])
+						{
+							static Block block;
+							Blocks.GetArray(wblock.Id, block);
+							block.Inv[client]++;
+							Blocks.SetArray(wblock.Id, block);
+							if(InMenu[client])
+								ToolMenu(client);
+						}
+					}
 				}
 			}
 		}
@@ -1139,18 +1300,29 @@ void PlaceBlock(int client)
 {
 	if(!World || Selected[client] < 0 || Selected[client] >= Blocks.Length)
 		return;
-
+	
+	Block block;
+	Blocks.GetArray(Selected[client], block);
+	if(!Creative[client] && block.Inv[client] < 1)
+	{
+		Selected[client] = -1;
+		if(InMenu[client])
+			ToolMenu(client);
+		
+		return;
+	}
+	
 	static float eye[3], ang[3], pos[3];
 	GetClientEyePosition(client, eye);
 	GetClientEyeAngles(client, ang);
-
+	
 	TR_TraceRayFilter(eye, ang, MASK_ALL, RayType_Infinite, TraceEntityFilterPlayer, client); 
 	TR_GetEndPosition(pos);
-
+	
 	float offset[3];
 	GetBlockOffset(offset);
 	float spread = CvarModel.FloatValue*CvarSize.FloatValue;
-
+	
 	float range = CvarRange.FloatValue;
 	float distance = GetVectorDistance(eye, pos);
 	if(distance > range)
@@ -1161,7 +1333,7 @@ void PlaceBlock(int client)
 	{
 		ConstrainDistance(eye, pos, distance, distance-1.0);
 	}
-
+	
 	// data.Pos[a] = wblock.Pos[a] * spread + offset[a];
 	int cords[3];
 	for(int i; i<3; i++)
@@ -1169,7 +1341,7 @@ void PlaceBlock(int client)
 		cords[i] = /*i==2 ? RoundToFloor((pos[i] - offset[i]) / spread) :*/ RoundToNearest((pos[i] - offset[i]) / spread);
 		pos[i] = cords[i] * spread + offset[i];
 	}
-
+	
 	WorldBlock wblock;
 	int length = World.Length;
 	for(int i; i<length; i++)
@@ -1181,13 +1353,13 @@ void PlaceBlock(int client)
 			return;
 		}
 	}
-
+	
 	if(pos[0] > 32768.0 || pos[1] > 32768.0 || pos[2] > 32768.0 || pos[0] < -32768.0 || pos[1] < -32768.0 || pos[2] < -32768.0)
 	{
 		PrintHintText(client, "Block out of bounds");
 		return;
 	}
-
+	
 	static float pos2[3];
 	pos2[0] = pos[0];
 	pos2[1] = pos[1];
@@ -1205,9 +1377,19 @@ void PlaceBlock(int client)
 			}
 		}
 	}
-
-	Block block;
-	Blocks.GetArray(Selected[client], block);
+	
+	if(!Creative[client])
+	{
+		block.Inv[client]--;
+		if(!block.Inv[client])
+			Selected[client] = -1;
+		
+		if(InMenu[client])
+			ToolMenu(client);
+		
+		Blocks.SetArray(Selected[client], block);
+	}
+	
 	wblock.Id = Selected[client];
 	for(int i; i<3; i++)
 	{
@@ -1221,7 +1403,8 @@ void PlaceBlock(int client)
 			wblock.Ang[i] = -90.0;
 		}
 	}
-
+	
+	wblock.Owner = GetClientUserId(client);
 	wblock.Team = GetClientTeam(client);
 	wblock.Health = block.Health;
 	if(CurrentEntities < 2030)
@@ -1235,7 +1418,8 @@ void PlaceBlock(int client)
 	}
 	
 	World.PushArray(wblock);
-
+	CallBlockNotice(wblock.Pos, true);
+	
 	ClientCommand(client, "playgamesound minecraft/stone1.mp3");
 }
 
@@ -1326,7 +1510,7 @@ void SaveWorld(int client, char filepath[PLATFORM_MAX_PATH], int time)
 	{
 		World.GetArray(i, wblock);
 		Blocks.GetArray(wblock.Id, block);
-		file.WriteLine("%s;%d;%d;%d;%d;%.0f;%.0f;%.0f;%d", block.Id, wblock.Health, wblock.Pos[0], wblock.Pos[1], wblock.Pos[2], wblock.Ang[0], wblock.Ang[1], wblock.Ang[2], wblock.Team);
+		file.WriteLine("%s;%d;%d;%d;%d;%.0f;%.0f;%.0f;%d;%d", block.Id, wblock.Health, wblock.Pos[0], wblock.Pos[1], wblock.Pos[2], wblock.Ang[0], wblock.Ang[1], wblock.Ang[2], wblock.Team, wblock.Flags);
 	}
 	file.Close();
 }
@@ -1346,8 +1530,8 @@ bool LoadWorld(const char[] filepath)
 	wblock.Ref = INVALID_ENT_REFERENCE;
 	while(!file.EndOfFile())
 	{
-		static char buffer[256], buffers[9][32];
-		if(file.ReadLine(buffer, sizeof(buffer)) && ExplodeString(buffer, ";", buffers, sizeof(buffers), sizeof(buffers[])) == sizeof(buffers))
+		static char buffer[256], buffers[10][32];
+		if(file.ReadLine(buffer, sizeof(buffer)) && ExplodeString(buffer, ";", buffers, sizeof(buffers), sizeof(buffers[])))
 		{
 			if((wblock.Id = GetBlockOfId(buffers[0], block)) != -1)
 			{
@@ -1359,6 +1543,7 @@ bool LoadWorld(const char[] filepath)
 				wblock.Ang[1] = StringToFloat(buffers[6]);
 				wblock.Ang[2] = StringToFloat(buffers[7]);
 				wblock.Team = StringToInt(buffers[8]);
+				wblock.Flags = StringToInt(buffers[9]);
 				World.PushArray(wblock);
 			}
 		}
@@ -1450,17 +1635,163 @@ void StartSpawning()
 
 void GetBlockOffset(float offset[3])
 {
-	static char buffer[48];
-	CvarOffset.GetString(buffer, sizeof(buffer));
-	ExplodeStringFloat(buffer, " ", offset, sizeof(offset));
+	static float cache[3];
+	if(!OffsetCached)
+	{
+		char buffer[48];
+		CvarOffset.GetString(buffer, sizeof(buffer));
+		ExplodeStringFloat(buffer, " ", cache, sizeof(cache));
+		OffsetCached = true;
+	}
+	
+	for(int i; i<3; i++)
+	{
+		offset[i] = cache[i];
+	}
 }
 
 Function KvGetFunction(Handle kv, const char[] key, Function defvalue=INVALID_FUNCTION)
 {
 	static char buffer[48];
 	KvGetString(kv, key, buffer, sizeof(buffer), "1");
-	if(buffer[0] == '1')
+	if(buffer[0] == '1' && defvalue)
 		return defvalue;
 	
 	return GetFunctionByName(null, buffer);
+}
+
+void CallBlockNotice(int pos[3], bool create)
+{
+	WorldBlock wblock;
+	int length = World.Length;
+	for(int i; i<length; i++)
+	{
+		World.GetArray(i, wblock);
+		static Block block;
+		Blocks.GetArray(wblock.Id, block);
+		if(block.OnNotice != INVALID_FUNCTION)
+		{
+			bool equalX = pos[0] == wblock.Pos[0];
+			bool equalY = pos[1] == wblock.Pos[1];
+			bool equalZ = pos[2] == wblock.Pos[2];
+			
+			PosOffset offset = Pos_Unknown;
+			if(equalY && equalZ)
+			{
+				int result = pos[0] - wblock.Pos[0];
+				if(result == 1)
+				{
+					offset = Pos_XUp;
+				}
+				else if(result == -1)
+				{
+					offset = Pos_XDown;
+				}
+			}
+			else if(equalX && equalZ)
+			{
+				int result = pos[1] - wblock.Pos[1];
+				if(result == 1)
+				{
+					offset = Pos_YUp;
+				}
+				else if(result == -1)
+				{
+					offset = Pos_YDown;
+				}
+			}
+			else if(equalX && equalY)
+			{
+				int result = pos[2] - wblock.Pos[2];
+				if(result == 1)
+				{
+					offset = Pos_ZUp;
+				}
+				else if(result == -1)
+				{
+					offset = Pos_ZDown;
+				}
+			}
+			
+			if(offset != Pos_Unknown)
+			{
+				Call_StartFunction(null, block.OnNotice);
+				Call_PushCell(i);
+				Call_PushCell(EntRefToEntIndex(wblock.Ref));
+				Call_PushCell(offset);
+				Call_PushCell(create);
+				Call_Finish();
+			}
+		}
+	}
+}
+
+public any Native_OpenMenu(Handle plugin, int params)
+{
+	int client = GetNativeCell(1);
+	if(client < 1 || client > MaxClients || !IsClientInGame(client))
+		ThrowNativeError(SP_ERROR_INDEX, "Client %d is not in-game", client);
+	
+	InMenu[client] = true;
+	Creative[client] = GetNativeCell(2);
+	ToolMenu(client);
+}
+
+public any Native_CloseMenu(Handle plugin, int params)
+{
+	int client = GetNativeCell(1);
+	if(client < 1 || client > MaxClients || !IsClientInGame(client))
+		return ThrowNativeError(SP_ERROR_INDEX, "Client %d is not in-game", client);
+	
+	if(!InMenu[client])
+		return false;
+	
+	return CancelClientMenu(client);
+}
+
+public any Native_GetBlockInv(Handle plugin, int params)
+{
+	Block block;
+	int length = sizeof(block.Id);
+	GetNativeStringLength(1, length);
+	
+	char[] id = new char[length];
+	GetNativeString(1, id, length);
+	
+	int client = GetNativeCell(2);
+	if(GetBlockOfId(id, block) == -1)
+		return -1;
+	
+	if(!client)
+		return true;
+	
+	if(client < 0 || client > MaxClients || !IsClientInGame(client))
+		return ThrowNativeError(SP_ERROR_INDEX, "Client %d is not in-game", client);
+	
+	return block.Inv[client] < 1 ? 0 : block.Inv[client];
+}
+
+public any Native_SetBlockInv(Handle plugin, int params)
+{
+	Block block;
+	int length = sizeof(block.Id);
+	GetNativeStringLength(1, length);
+	
+	char[] id = new char[length];
+	GetNativeString(1, id, length);
+	
+	int client = GetNativeCell(2);
+	int index = GetBlockOfId(id, block);
+	if(index == -1)
+		return false;
+	
+	if(!client)
+		return true;
+	
+	if(client < 0 || client > MaxClients || !IsClientInGame(client))
+		return ThrowNativeError(SP_ERROR_INDEX, "Client %d is not in-game", client);
+	
+	block.Inv[client] = GetNativeCell(3);
+	Blocks.SetArray(index, block);
+	return true;
 }
