@@ -4,7 +4,6 @@
 #include <clientprefs>
 #include <sdkhooks>
 #include <tf2_stocks>
-#include <profiler>
 
 #pragma newdecls required
 
@@ -15,6 +14,8 @@
 
 #define MAXTF2PLAYERS	36
 #define SAVE_DELAY	86400	// 24 hours
+
+native any mctf_FuncToVal(Function func);
 
 enum PosOffset
 {
@@ -75,6 +76,7 @@ ConVar CvarAll;
 ConVar CvarFadeMinDist;
 ConVar CvarFadeMaxDist;
 ConVar CvarVote;
+ConVar CvarNoCollide;
 Cookie SaveDelay;
 
 //bool BlockMoney;
@@ -106,6 +108,7 @@ public Plugin myinfo =
 
 public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max)
 {
+	CreateNative("mctf_FuncToVal", Native_FuncToVal);
 	CreateNative("MC_OpenMenu", Native_OpenMenu);
 	CreateNative("MC_CloseMenu", Native_CloseMenu);
 	CreateNative("MC_GetBlockInv", Native_GetBlockInv);
@@ -124,6 +127,7 @@ public void OnPluginStart()
 	CvarVote = CreateConVar("minecraft_allvote", "0", "Allow everyone to with build tools to call a vote on world settings", _, true, 0.0, true, 1.0);
 	CvarFadeMinDist = CreateConVar("minecraft_fademindist", "3000.0", "Distance at which blocks starts fading", _, true, 0.0);
 	CvarFadeMaxDist = CreateConVar("minecraft_fademaxdist", "4000.0", "Distance at which blocks ends fading", _, true, 0.0);
+	CvarNoCollide = CreateConVar("minecraft_nocollide", "0", "Players on the same team except for the placer can walk through blocks", _, true, 0.0, true, 1.0);
 
 	AutoExecConfig();
 
@@ -133,6 +137,9 @@ public void OnPluginStart()
 	CvarSize.AddChangeHook(ConVarChanged);
 	CvarModel.AddChangeHook(ConVarChanged);
 	CvarOffset.AddChangeHook(ConVarChanged);
+	CvarFadeMinDist.AddChangeHook(ConVarChanged);
+	CvarFadeMaxDist.AddChangeHook(ConVarChanged);
+	CvarNoCollide.AddChangeHook(ConVarChanged);
 
 	HookEvent("player_spawn", OnPlayerSpawn, EventHookMode_Post);
 	HookEvent("teamplay_round_start", OnMapRefresh, EventHookMode_PostNoCopy);
@@ -382,6 +389,7 @@ public Action Timer_UpdateRendering(Handle timer)
 {
 	RenderTimer = null;
 	UpdateRendering();
+	return Plugin_Continue;
 }
 
 /*
@@ -590,6 +598,8 @@ public void CreateBlock(WorldBlock wblock, const float pos[3])
 		SetEntPropFloat(entity, Prop_Send, "m_fadeMaxDist", CvarFadeMaxDist.FloatValue);
 		SetEntPropFloat(entity, Prop_Send, "m_flModelScale", CvarModel.FloatValue);
 		SetEntData(entity, FindSendPropInfo("CTFBaseBoss", "m_lastHealthPercentage") + 28, false, 4);	// m_bResolvePlayerCollisions
+		SetEntProp(entity, Prop_Data, "m_bloodColor", -1);
+		SetEntityFlags(entity, FL_NPC|FL_CLIENT);
 		
 		wblock.Edicts = 1;
 		wblock.Flags = 0;
@@ -608,7 +618,17 @@ public void CreateBlock(WorldBlock wblock, const float pos[3])
 		SDKHook(entity, SDKHook_SetTransmit, OnBlockTransmit);
 		
 		if(block.OnThink != INVALID_FUNCTION)
-			SDKHook(entity, SDKHook_Think, view_as<SDKHookCB>(block.OnThink));
+			SDKHook(entity, SDKHook_Think, mctf_FuncToVal(block.OnThink));
+		
+		if(CvarNoCollide.BoolValue)
+		{
+			SetEntityCollisionGroup(entity, 27);
+			int owner = GetClientOfUserId(wblock.Owner);
+			if(owner)
+				SetEntPropEnt(entity, Prop_Send, "m_hOwnerEntity", owner);
+			//SDKHook(entity, SDKHook_Touch, OnBlockTouch);
+			//SDKHook(entity, SDKHook_EndTouch, OnBlockEndTouch);
+		}
 		
 		wblock.Ref = EntIndexToEntRef(entity);
 	}
@@ -622,12 +642,26 @@ public Action OnBlockTransmit(int entity, int client)
 
 public Action OnBlockDamaged(int entity, int &attacker, int &inflictor, float &damage, int &damagetype, int &weapon, float damageForce[3], float damagePosition[3], int damagecustom)
 {
+	bool client = (attacker > 0 && attacker <= MaxClients);
+	if(client && CvarNoCollide.BoolValue && GetEntProp(entity, Prop_Send, "m_iTeamNum") == GetClientTeam(attacker))
+	{
+		int id = World.FindValue(EntIndexToEntRef(entity), WorldBlock::Ref);
+		if(id != -1)
+		{
+			WorldBlock wblock;
+			World.GetArray(id, wblock);
+			int owner = GetClientOfUserId(wblock.Owner);
+			if(!owner || owner != attacker)
+				return Plugin_Handled;
+		}
+	}
+	
 	int dmg = RoundToNearest(damage);
 	int health = GetEntProp(entity, Prop_Data, "m_iHealth") - dmg;
 	if(health < 0)
 		health = 0;
 	
-	if(attacker > 0 && attacker <= MaxClients)
+	if(client)
 	{
 		Event event = CreateEvent("npc_hurt", true);
 		event.SetInt("entindex", entity);
@@ -664,6 +698,73 @@ public Action OnBlockDamaged(int entity, int &attacker, int &inflictor, float &d
 	SDKHooks_TakeDamage(entity, inflictor, attacker, damage, DMG_GENERIC, -1, damageForce, damagePosition);
 	return Plugin_Handled;*/
 	return Plugin_Handled;
+}
+
+public bool OnBlockCollide(int entity, int collisiongroup, int contentsmask, bool originalResult)
+{
+	PrintToChatAll("%d %d", collisiongroup, contentsmask);
+	if(collisiongroup == 8)
+	{
+		float spread = CvarModel.FloatValue*CvarSize.FloatValue;
+		float mins[3], maxs[3];
+		for(int i; i<3; i++)
+		{
+			maxs[i] = spread;
+			mins[i] = -spread;
+		}
+		
+		float pos[3];
+		GetEntPropVector(entity, Prop_Send, "m_vecOrigin", pos);
+		
+		Handle trace = TR_TraceHullFilterEx(pos, pos, mins, maxs, MASK_PLAYERSOLID, TraceFilterBuilding, entity);
+		bool found = (TR_DidHit(trace) && 0 < TR_GetEntityIndex(trace) <= MaxClients);
+		delete trace;
+		
+		if(found)
+			return false;
+	}
+	return originalResult;
+}
+
+public Action OnBlockTouch(int entity, int client)
+{
+	if(client > 0 && client <= MaxClients && GetEntProp(entity, Prop_Send, "m_iTeamNum") == GetClientTeam(client))
+	{
+		int id = World.FindValue(EntIndexToEntRef(entity), WorldBlock::Ref);
+		if(id != -1)
+		{
+			WorldBlock wblock;
+			World.GetArray(id, wblock);
+			if(GetClientOfUserId(wblock.Owner) != client)
+				SetEntityCollisionGroup(entity, 27);
+		}
+	}
+	return Plugin_Continue;
+}
+
+public Action OnBlockEndTouch(int entity, int client)
+{
+	if(client > 0 && client <= MaxClients && GetEntProp(entity, Prop_Send, "m_iTeamNum") == GetClientTeam(client))
+	{
+		float spread = CvarModel.FloatValue*CvarSize.FloatValue;
+		float mins[3], maxs[3];
+		for(int i; i<3; i++)
+		{
+			maxs[i] = spread;
+			mins[i] = -spread;
+		}
+		
+		float pos[3];
+		GetEntPropVector(entity, Prop_Send, "m_vecOrigin", pos);
+		
+		Handle trace = TR_TraceHullFilterEx(pos, pos, mins, maxs, MASK_PLAYERSOLID, TraceFilterBuilding, entity);
+		bool found = (TR_DidHit(trace) && 0 < TR_GetEntityIndex(trace) <= MaxClients);
+		delete trace;
+		
+		if(!found)
+			SetEntityCollisionGroup(entity, 5);
+	}
+	return Plugin_Continue;
 }
 
 /*public void OnBlockKilled(const char[] output, int caller, int activator, float delay)
@@ -824,6 +925,8 @@ void ToolMenu(int client)
 	Menu menu = new Menu(ToolMenuH);
 	menu.SetTitle("Minecraft: Build\n ");
 	
+	bool creative = Creative[client];
+	
 	Block block;
 	char num[12], buffer[64];
 	int count;
@@ -831,20 +934,21 @@ void ToolMenu(int client)
 	for(int i; i<length; i++)
 	{
 		Blocks.GetArray(i, block);
-		if(Creative[client] || block.Inv[client] > 0)
+		if(creative || block.Inv[client] > 0)
 		{
 			count++;
 			IntToString(i, num, sizeof(num));
-			if(Creative[client])
+			if(creative)
 			{
 				menu.AddItem(num, block.Name, Selected[client]==i ? ITEMDRAW_DISABLED : ITEMDRAW_DEFAULT);
 			}
 			else
 			{
-				FormatEx(buffer, sizeof(buffer), "%s (x%d)", block.Name, block.Inv[client]);
-				menu.AddItem(num, block.Name, Selected[client]==i ? ITEMDRAW_DISABLED : ITEMDRAW_DEFAULT);
 				if(Selected[client] == -1)
 					Selected[client] = i;
+				
+				FormatEx(buffer, sizeof(buffer), "%s (x%d)", block.Name, block.Inv[client]);
+				menu.AddItem(num, buffer, Selected[client]==i ? ITEMDRAW_DISABLED : ITEMDRAW_DEFAULT);
 			}
 		}
 	}
@@ -856,6 +960,9 @@ void ToolMenu(int client)
 		InPage[client] = count;
 	
 	menu.DisplayAt(client, (InPage[client]/7)*7, MENU_TIME_FOREVER);
+	
+	InMenu[client] = true;
+	Creative[client] = creative;
 }
 
 public int ToolMenuH(Menu menu, MenuAction action, int client, int choice)
@@ -884,11 +991,11 @@ public int ToolMenuH(Menu menu, MenuAction action, int client, int choice)
 			char buffer[12];
 			menu.GetItem(choice, buffer, sizeof(buffer));
 			Selected[client] = StringToInt(buffer);
-			
 			InPage[client] = choice;
 			ToolMenu(client);
 		}
 	}
+	return 0;
 }
 
 public Action Command_Save(int client, int args)
@@ -1064,13 +1171,13 @@ public int SaveMenuH(Menu menu, MenuAction action, int client, int choice)
 						vote.DisplayVoteToAll(20);
 					}
 				}
-				return;
+				return 0;
 			}
 
 			if(!World || World.Length<11)
 			{
 				SaveMenu(client, choice);
-				return;
+				return 0;
 			}
 
 			int time = GetTime();
@@ -1083,14 +1190,14 @@ public int SaveMenuH(Menu menu, MenuAction action, int client, int choice)
 					{
 						PrintToChat(client, "[SM] You can not save for %d minutes", (last-time)/60);
 						SaveMenu(client, choice);
-						return;
+						return 0;
 					}
 				}
 				else
 				{
 					PrintToChat(client, "[SM] %t", "No Access");
 					SaveMenu(client, choice);
-					return;
+					return 0;
 				}
 			}
 
@@ -1099,6 +1206,7 @@ public int SaveMenuH(Menu menu, MenuAction action, int client, int choice)
 			SaveMenu(client, choice);
 		}
 	}
+	return 0;
 }
 
 public int VoteMenuH(Menu menu, MenuAction action, int client, int choice)
@@ -1122,6 +1230,7 @@ public int VoteMenuH(Menu menu, MenuAction action, int client, int choice)
 			}
 		}
 	}
+	return 0;
 }
 
 public Action OnPlayerRunCmd(int client, int &buttons)
@@ -1188,13 +1297,30 @@ void PredictBlock(int client)
 	GetClientEyePosition(client, eye);
 	GetClientEyeAngles(client, ang);
 
-	TR_TraceRayFilter(eye, ang, MASK_ALL, RayType_Infinite, TraceEntityFilterPlayer, client); 
-	TR_GetEndPosition(pos);
+	Handle trace = TR_TraceRayFilterEx(eye, ang, MASK_ALL, RayType_Infinite, TraceFilterEntity, client); 
+	TR_GetEndPosition(pos, trace);
+	delete trace;
+	
+	float scale = CvarModel.FloatValue;
+	float spread = scale*CvarSize.FloatValue;
+	//if(!Creative[client])
+	{
+		float mins[3], maxs[3];
+		for(int i; i<3; i++)
+		{
+			maxs[i] = spread;
+			mins[i] = -spread;
+		}
+		
+		trace = TR_TraceHullFilterEx(eye, pos, mins, maxs, MASK_PLAYERSOLID, TraceFilterWorld);
+		if(TR_DidHit(trace))
+			TR_GetEndPosition(pos, trace);
+		
+		delete trace;
+	}
 
 	float offset[3];
 	GetBlockOffset(offset);
-	float scale = CvarModel.FloatValue;
-	float spread = scale*CvarSize.FloatValue;
 
 	float range = CvarRange.FloatValue;
 	float distance = GetVectorDistance(eye, pos);
@@ -1276,19 +1402,26 @@ void BreakBlock(int client)
 					GetEntPropVector(entity, Prop_Send, "m_vecOrigin", pos2);
 					if(GetVectorDistance(pos1, pos2) < CvarRange.FloatValue + (CvarModel.FloatValue*CvarSize.FloatValue/2.0))
 					{
-						CallBlockNotice(wblock.Pos, false);
-						World.Erase(id);
-						RemoveEntity(entity);
-						ClientCommand(client, "playgamesound minecraft/stone2.mp3");
 						if(!Creative[client])
 						{
 							static Block block;
 							Blocks.GetArray(wblock.Id, block);
+							if(CvarNoCollide.BoolValue && GetEntProp(entity, Prop_Data, "m_iHealth") < block.Health)
+							{
+								PrintHintText(client, "Block is damaged");
+								return;
+							}
+							
 							block.Inv[client]++;
 							Blocks.SetArray(wblock.Id, block);
 							if(InMenu[client])
 								ToolMenu(client);
 						}
+						
+						CallBlockNotice(wblock.Pos, false);
+						World.Erase(id);
+						RemoveEntity(entity);
+						ClientCommand(client, "playgamesound minecraft/stone2.mp3");
 					}
 				}
 			}
@@ -1305,6 +1438,7 @@ void PlaceBlock(int client)
 	Blocks.GetArray(Selected[client], block);
 	if(!Creative[client] && block.Inv[client] < 1)
 	{
+		PrintHintText(client, "Out of blocks");
 		Selected[client] = -1;
 		if(InMenu[client])
 			ToolMenu(client);
@@ -1316,12 +1450,29 @@ void PlaceBlock(int client)
 	GetClientEyePosition(client, eye);
 	GetClientEyeAngles(client, ang);
 	
-	TR_TraceRayFilter(eye, ang, MASK_ALL, RayType_Infinite, TraceEntityFilterPlayer, client); 
-	TR_GetEndPosition(pos);
+	Handle trace = TR_TraceRayFilterEx(eye, ang, MASK_ALL, RayType_Infinite, TraceFilterEntity, client); 
+	TR_GetEndPosition(pos, trace);
+	delete trace;
+	
+	float spread = CvarModel.FloatValue*CvarSize.FloatValue;
+	//if(!Creative[client])
+	{
+		float mins[3], maxs[3];
+		for(int i; i<3; i++)
+		{
+			maxs[i] = spread;
+			mins[i] = -spread;
+		}
+		
+		trace = TR_TraceHullFilterEx(eye, pos, mins, maxs, MASK_PLAYERSOLID, TraceFilterWorld);
+		if(TR_DidHit(trace))
+			TR_GetEndPosition(pos, trace);
+		
+		delete trace;
+	}
 	
 	float offset[3];
 	GetBlockOffset(offset);
-	float spread = CvarModel.FloatValue*CvarSize.FloatValue;
 	
 	float range = CvarRange.FloatValue;
 	float distance = GetVectorDistance(eye, pos);
@@ -1378,19 +1529,20 @@ void PlaceBlock(int client)
 		}
 	}
 	
+	wblock.Id = Selected[client];
+	
 	if(!Creative[client])
 	{
 		block.Inv[client]--;
+		Blocks.SetArray(Selected[client], block);
+		
 		if(!block.Inv[client])
 			Selected[client] = -1;
 		
 		if(InMenu[client])
 			ToolMenu(client);
-		
-		Blocks.SetArray(Selected[client], block);
 	}
 	
-	wblock.Id = Selected[client];
 	for(int i; i<3; i++)
 	{
 		wblock.Pos[i] = cords[i];
@@ -1566,9 +1718,24 @@ int GetBlockOfId(const char[] id, Block block)
 	return -1;
 }
 
-public bool TraceEntityFilterPlayer(int entity, int contentsMask, any data)
+public bool TraceFilterEntity(int entity, int contentsMask, any data)
 {
 	return entity != data && IsValidEntity(entity);
+}
+
+public bool TraceFilterBuilding(int entity, int contentsMask, any data)
+{
+	return entity != data && entity > 0 && entity <= MaxClients && GetClientTeam(entity) == GetEntProp(data, Prop_Send, "m_iTeamNum");
+}
+
+public bool TraceFilterPlayer(int entity, int contentsMask, any data)
+{
+	return entity != data && entity > 0 && entity <= MaxClients;
+}
+
+public bool TraceFilterWorld(int entity, int contentsMask, any data)
+{
+	return entity == 0;
 }
 
 stock int ExplodeStringInt(const char[] text, const char[] split, int[] buffers, int max)
@@ -1726,15 +1893,21 @@ void CallBlockNotice(int pos[3], bool create)
 	}
 }
 
+public any Native_FuncToVal(Handle plugin, int params)
+{
+	return GetNativeCell(1);
+}
+
 public any Native_OpenMenu(Handle plugin, int params)
 {
 	int client = GetNativeCell(1);
 	if(client < 1 || client > MaxClients || !IsClientInGame(client))
-		ThrowNativeError(SP_ERROR_INDEX, "Client %d is not in-game", client);
+		return ThrowNativeError(SP_ERROR_INDEX, "Client %d is not in-game", client);
 	
 	InMenu[client] = true;
 	Creative[client] = GetNativeCell(2);
 	ToolMenu(client);
+	return 0;
 }
 
 public any Native_CloseMenu(Handle plugin, int params)
@@ -1755,7 +1928,7 @@ public any Native_GetBlockInv(Handle plugin, int params)
 	int length = sizeof(block.Id);
 	GetNativeStringLength(1, length);
 	
-	char[] id = new char[length];
+	char[] id = new char[++length];
 	GetNativeString(1, id, length);
 	
 	int client = GetNativeCell(2);
@@ -1777,7 +1950,7 @@ public any Native_SetBlockInv(Handle plugin, int params)
 	int length = sizeof(block.Id);
 	GetNativeStringLength(1, length);
 	
-	char[] id = new char[length];
+	char[] id = new char[++length];
 	GetNativeString(1, id, length);
 	
 	int client = GetNativeCell(2);

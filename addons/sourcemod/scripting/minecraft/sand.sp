@@ -14,7 +14,7 @@ public void Notice_Sand(int index, int entity, PosOffset offset, bool created)
 	{
 		if(entity > MaxClients)
 		{
-			SDKHook(entity, SDKHook_StartTouch, Sand_Touch);
+			SDKHook(entity, SDKHook_StartTouch, Sand_StartTouch);
 			RequestFrame(Sand_FrameMove, EntIndexToEntRef(entity));
 		}
 		
@@ -55,7 +55,7 @@ public void Sand_FrameCheck(int ref)
 				}
 			}
 			
-			SDKHook(entity, SDKHook_StartTouch, Sand_Touch);
+			SDKHook(entity, SDKHook_StartTouch, Sand_StartTouch);
 			RequestFrame(Sand_FrameMove, ref);
 		}
 	}
@@ -72,18 +72,34 @@ public void Sand_FrameMove(int ref)
 			WorldBlock wblock;
 			World.GetArray(id, wblock);
 			
+			float spread = CvarModel.FloatValue*CvarSize.FloatValue;
+			
 			float pos[3];
 			GetEntPropVector(entity, Prop_Send, "m_vecOrigin", pos);
 			if(!wblock.Flags)
+			{
 				pos[2] -= SAND_FALLING_SPEED;
+				
+				float mins[3], maxs[3];
+				for(int i; i<3; i++)
+				{
+					maxs[i] = spread;
+					mins[i] = -spread;
+				}
+				
+				Handle trace = TR_TraceHullFilterEx(pos, pos, mins, maxs, MASK_PLAYERSOLID, TraceFilterPlayer, entity);
+				if(TR_DidHit(trace) && 0 < TR_GetEntityIndex(trace) <= MaxClients)
+					pos[2] += SAND_FALLING_SPEED;
+
+				delete trace;
+			}
 			
 			float offset[3];
 			GetBlockOffset(offset);
-			float spread = CvarModel.FloatValue*CvarSize.FloatValue;
 			
-			int z = wblock.Flags ? (RoundToNearest((pos[2] - offset[2]) / spread)) : (RoundToCeil((pos[2] - offset[2]) / spread));
+			int z = /*wblock.Flags > 0 ? (RoundToNearest((pos[2] - offset[2]) / spread)) :*/ (RoundToCeil((pos[2] - offset[2]) / spread));
 			
-			if(wblock.Pos[2] != z || wblock.Flags)
+			if(wblock.Pos[2] != z || wblock.Flags > 0)
 			{
 				bool found, changed;
 				WorldBlock wblock2;
@@ -113,7 +129,7 @@ public void Sand_FrameMove(int ref)
 					}
 				}
 				
-				if(found || wblock.Flags)
+				if(found || wblock.Flags > 0)
 				{
 					wblock.Pos[2] = z;
 					wblock.Flags = 2;
@@ -125,7 +141,7 @@ public void Sand_FrameMove(int ref)
 					}
 					
 					TeleportEntity(entity, pos, NULL_VECTOR, NULL_VECTOR);
-					SDKUnhook(entity, SDKHook_StartTouch, Sand_Touch);
+					SDKUnhook(entity, SDKHook_StartTouch, Sand_StartTouch);
 					return;
 				}
 				else
@@ -149,7 +165,7 @@ public void Sand_FrameMove(int ref)
 	}
 }
 
-public Action Sand_Touch(int entity, int other)
+public Action Sand_StartTouch(int entity, int other)
 {
 	if(other == 0)
 	{
