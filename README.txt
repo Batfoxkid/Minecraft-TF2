@@ -1,1 +1,3 @@
-Plugin based on https://github.com/MoonlyDays/TF2_MinecraftBlocks along with reused assets
+A new Minecraft plugin that introduces block logic, custom rendering, and more!
+
+Requires SourceMod 1.11+
