@@ -35,11 +35,13 @@ enum struct Block
 	char Model[PLATFORM_MAX_PATH];
 	char Skin[4];
 	int Health;
-	bool Rotate;
+	int Rotate;
 	
 	Function OnSpawn;
 	Function OnThink;
 	Function OnNotice;
+	Function OnInteract;
+	Function OnDamage;
 	
 	int Inv[MAXTF2PLAYERS];
 }
@@ -95,8 +97,12 @@ int PredictRef[MAXTF2PLAYERS];
 int Selected[MAXTF2PLAYERS];
 int InPage[MAXTF2PLAYERS];
 
-#include "minecraft/basic.sp"
+#include "minecraft/shared.sp"
+#include "minecraft/chest.sp"
+#include "minecraft/furnace.sp"
+#include "minecraft/noteblock.sp"
 #include "minecraft/sand.sp"
+#include "minecraft/tnt.sp"
 
 public Plugin myinfo =
 {
@@ -166,7 +172,7 @@ public void ConVarChanged(ConVar convar, const char[] oldValue, const char[] new
 	
 	if(World)
 	{
-		WorldBlock wblock;
+		static WorldBlock wblock;
 		int length = World.Length;
 		for(int i; i<length; i++)
 		{
@@ -195,6 +201,10 @@ public void OnMapStart()
 	World = new ArrayList(sizeof(WorldBlock));
 	AddFileToDownloadsTable("sound/minecraft/stone1.mp3");
 	AddFileToDownloadsTable("sound/minecraft/stone2.mp3");
+	
+	MapStart_Furnace();
+	MapStart_Noteblock();
+	MapStart_Tnt();
 }
 
 public void OnMapEnd()
@@ -217,7 +227,7 @@ public void OnPluginEnd()
 	if(World)
 	{
 		IgnoreSpawn = true;
-		WorldBlock wblock;
+		static WorldBlock wblock;
 		int length = World.Length;
 		for(int i; i<length; i++)
 		{
@@ -256,11 +266,13 @@ public void OnConfigsExecuted()
 			kv.GetString("model", block.Model, sizeof(block.Model), DefaultBlock.Model);
 			kv.GetString("skin", block.Skin, sizeof(block.Skin), DefaultBlock.Skin);
 			block.Health = kv.GetNum("health", DefaultBlock.Health);
-			block.Rotate = view_as<bool>(kv.GetNum("rotate", DefaultBlock.Rotate));
+			block.Rotate = kv.GetNum("rotate", DefaultBlock.Rotate);
 			
 			block.OnSpawn = KvGetFunction(kv, "onspawn", DefaultBlock.OnSpawn);
 			block.OnThink = KvGetFunction(kv, "onthink", DefaultBlock.OnThink);
 			block.OnNotice = KvGetFunction(kv, "onnotice", DefaultBlock.OnNotice);
+			block.OnInteract = KvGetFunction(kv, "oninteract", DefaultBlock.OnInteract);
+			block.OnDamage = KvGetFunction(kv, "ondamage", DefaultBlock.OnDamage);
 			
 			if(StrEqual(block.Id, "default"))
 			{
@@ -580,13 +592,13 @@ public void CreateBlock(WorldBlock wblock, const float pos[3])
 	Blocks.GetArray(wblock.Id, block);
 	
 	int entity = CreateEntityByName("base_boss");
-	if(IsValidEntity(entity))
+	if(entity != -1)
 	{
 		TeleportEntity(entity, pos, wblock.Ang, NULL_VECTOR);
 		
 		DispatchKeyValue(entity, "model", block.Model);
 		DispatchKeyValue(entity, "skin", block.Skin);
-		DispatchKeyValue(entity, "health", "1");
+		DispatchKeyValue(entity, "health", "2000000000");
 		
 		DispatchSpawn(entity);
 		ActivateEntity(entity);
@@ -599,7 +611,7 @@ public void CreateBlock(WorldBlock wblock, const float pos[3])
 		SetEntPropFloat(entity, Prop_Send, "m_flModelScale", CvarModel.FloatValue);
 		SetEntData(entity, FindSendPropInfo("CTFBaseBoss", "m_lastHealthPercentage") + 28, false, 4);	// m_bResolvePlayerCollisions
 		SetEntProp(entity, Prop_Data, "m_bloodColor", -1);
-		SetEntityFlags(entity, FL_NPC|FL_CLIENT);
+		SetEntityFlags(entity, FL_NPC);
 		
 		wblock.Edicts = 1;
 		wblock.Flags = 0;
@@ -642,14 +654,40 @@ public Action OnBlockTransmit(int entity, int client)
 
 public Action OnBlockDamaged(int entity, int &attacker, int &inflictor, float &damage, int &damagetype, int &weapon, float damageForce[3], float damagePosition[3], int damagecustom)
 {
+	static WorldBlock wblock;
+	int id = World.FindValue(EntIndexToEntRef(entity), WorldBlock::Ref);
+	if(id != -1)
+	{
+		World.GetArray(id, wblock);
+		
+		static Block block;
+		Blocks.GetArray(wblock.Id, block);
+		
+		if(block.OnDamage != INVALID_FUNCTION)
+		{
+			Call_StartFunction(null, block.OnDamage);
+			Call_PushCell(id);
+			Call_PushCell(entity);
+			Call_PushCellRef(attacker);
+			Call_PushCellRef(inflictor);
+			Call_PushFloatRef(damage);
+			Call_PushCellRef(damagetype);
+			Call_PushCellRef(weapon);
+			Call_PushArrayEx(damageForce, sizeof(damageForce), SP_PARAMFLAG_BYREF);
+			Call_PushArrayEx(damagePosition, sizeof(damagePosition), SP_PARAMFLAG_BYREF);
+			Call_PushCell(damagecustom);
+			Call_Finish();
+		}
+	}
+	
+	if(damage == 0.0)
+		return Plugin_Handled;
+	
 	bool client = (attacker > 0 && attacker <= MaxClients);
 	if(client && CvarNoCollide.BoolValue && GetEntProp(entity, Prop_Send, "m_iTeamNum") == GetClientTeam(attacker))
 	{
-		int id = World.FindValue(EntIndexToEntRef(entity), WorldBlock::Ref);
 		if(id != -1)
 		{
-			WorldBlock wblock;
-			World.GetArray(id, wblock);
 			int owner = GetClientOfUserId(wblock.Owner);
 			if(!owner || owner != attacker)
 				return Plugin_Handled;
@@ -679,13 +717,9 @@ public Action OnBlockDamaged(int entity, int &attacker, int &inflictor, float &d
 	}
 	else
 	{
-		int id = World.FindValue(EntIndexToEntRef(entity), WorldBlock::Ref);
 		if(id != -1)
 		{
-			WorldBlock wblock;
-			World.GetArray(id, wblock);
 			CallBlockNotice(wblock.Pos, false);
-			
 			World.Erase(id);
 		}
 		
@@ -700,7 +734,7 @@ public Action OnBlockDamaged(int entity, int &attacker, int &inflictor, float &d
 	return Plugin_Handled;
 }
 
-public bool OnBlockCollide(int entity, int collisiongroup, int contentsmask, bool originalResult)
+/*public bool OnBlockCollide(int entity, int collisiongroup, int contentsmask, bool originalResult)
 {
 	PrintToChatAll("%d %d", collisiongroup, contentsmask);
 	if(collisiongroup == 8)
@@ -767,7 +801,7 @@ public Action OnBlockEndTouch(int entity, int client)
 	return Plugin_Continue;
 }
 
-/*public void OnBlockKilled(const char[] output, int caller, int activator, float delay)
+public void OnBlockKilled(const char[] output, int caller, int activator, float delay)
 {
 	int ref = EntIndexToEntRef(caller);
 	int id = World.FindValue(ref, WorldBlock::Ref);
@@ -1236,9 +1270,30 @@ public int VoteMenuH(Menu menu, MenuAction action, int client, int choice)
 public Action OnPlayerRunCmd(int client, int &buttons)
 {
 	static int holding[MAXTF2PLAYERS];
-	if(!InMenu[client])
+	if(holding[client])
 	{
-		if((buttons & IN_ATTACK3) && CvarAll.BoolValue)
+		if(!(buttons & holding[client]))
+			holding[client] = 0;
+	}
+	else if(buttons & IN_ATTACK)
+	{
+		holding[client] = IN_ATTACK;
+		if(InMenu[client])
+			BreakBlock(client);
+	}
+	else if(buttons & IN_ATTACK2)
+	{
+		holding[client] = IN_ATTACK2;
+		if(InMenu[client])
+			PlaceBlock(client);
+	}
+	else if(buttons & IN_ATTACK3)
+	{
+		if(InMenu[client])
+		{
+			PlaceBlock(client);
+		}
+		else if(CvarAll.BoolValue)
 		{
 			Creative[client] = true;
 			InMenu[client] = true;
@@ -1247,45 +1302,38 @@ public Action OnPlayerRunCmd(int client, int &buttons)
 			buttons &= ~IN_ATTACK3;
 			return Plugin_Changed;
 		}
-		return Plugin_Continue;
+	}
+	else if(buttons & IN_USE)
+	{
+		holding[client] = IN_USE;
+		InteractBlock(client);
+	}
+	else if(buttons & IN_RELOAD)
+	{
+		holding[client] = IN_RELOAD;
+		InteractBlock(client);
 	}
 
-	if(holding[client])
+	if(InMenu[client])
 	{
-		if(!(buttons & holding[client]))
-			holding[client] = 0;
-	}
-	else if(buttons & IN_ATTACK)
-	{
-		BreakBlock(client);
-		holding[client] = IN_ATTACK;
-	}
-	else if(buttons & IN_ATTACK2)
-	{
-		PlaceBlock(client);
-		holding[client] = IN_ATTACK2;
-	}
-	else if(buttons & IN_ATTACK3)
-	{
-		PlaceBlock(client);
-	}
+		if(!holding[client])
+		{
+			PredictBlock(client);
+		}
+		else if(PredictRef[client] != INVALID_ENT_REFERENCE)
+		{
+			int entity = EntRefToEntIndex(PredictRef[client]);
+			if(entity > MaxClients)
+				RemoveEntity(entity);
 
-	if(!holding[client])
-	{
-		PredictBlock(client);
-	}
-	else if(PredictRef[client] != INVALID_ENT_REFERENCE)
-	{
-		int entity = EntRefToEntIndex(PredictRef[client]);
-		if(entity > MaxClients)
-			RemoveEntity(entity);
+			PredictRef[client] = INVALID_ENT_REFERENCE;
+		}
 
-		PredictRef[client] = INVALID_ENT_REFERENCE;
+		buttons &= ~(IN_ATTACK|IN_ATTACK2|IN_RELOAD|IN_ATTACK3);
+		SetEntPropFloat(client, Prop_Send, "m_flNextAttack", GetGameTime()+1.0);
+		return Plugin_Changed;
 	}
-
-	buttons &= ~(IN_ATTACK|IN_ATTACK2|IN_RELOAD|IN_ATTACK3);
-	SetEntPropFloat(client, Prop_Send, "m_flNextAttack", GetGameTime()+1.0);
-	return Plugin_Changed;
+	return Plugin_Continue;
 }
 
 void PredictBlock(int client)
@@ -1297,13 +1345,13 @@ void PredictBlock(int client)
 	GetClientEyePosition(client, eye);
 	GetClientEyeAngles(client, ang);
 
-	Handle trace = TR_TraceRayFilterEx(eye, ang, MASK_ALL, RayType_Infinite, TraceFilterEntity, client); 
+	Handle trace = TR_TraceRayFilterEx(eye, ang, MASK_SOLID, RayType_Infinite, TraceFilterEntity, client); 
 	TR_GetEndPosition(pos, trace);
 	delete trace;
 	
 	float scale = CvarModel.FloatValue;
 	float spread = scale*CvarSize.FloatValue;
-	//if(!Creative[client])
+	if(!Creative[client])
 	{
 		float mins[3], maxs[3];
 		for(int i; i<3; i++)
@@ -1350,7 +1398,7 @@ void PredictBlock(int client)
 	else
 	{
 		entity = CreateEntityByName("tf_taunt_prop");
-		if(IsValidEntity(entity))
+		if(entity != -1)
 		{
 			TeleportEntity(entity, pos, ang, NULL_VECTOR);
 
@@ -1450,12 +1498,12 @@ void PlaceBlock(int client)
 	GetClientEyePosition(client, eye);
 	GetClientEyeAngles(client, ang);
 	
-	Handle trace = TR_TraceRayFilterEx(eye, ang, MASK_ALL, RayType_Infinite, TraceFilterEntity, client); 
+	Handle trace = TR_TraceRayFilterEx(eye, ang, MASK_SOLID, RayType_Infinite, TraceFilterEntity, client); 
 	TR_GetEndPosition(pos, trace);
 	delete trace;
 	
 	float spread = CvarModel.FloatValue*CvarSize.FloatValue;
-	//if(!Creative[client])
+	if(!Creative[client])
 	{
 		float mins[3], maxs[3];
 		for(int i; i<3; i++)
@@ -1493,7 +1541,7 @@ void PlaceBlock(int client)
 		pos[i] = cords[i] * spread + offset[i];
 	}
 	
-	WorldBlock wblock;
+	static WorldBlock wblock;
 	int length = World.Length;
 	for(int i; i<length; i++)
 	{
@@ -1546,13 +1594,20 @@ void PlaceBlock(int client)
 	for(int i; i<3; i++)
 	{
 		wblock.Pos[i] = cords[i];
-		if(block.Rotate)
+		if(i == 1)
 		{
-			wblock.Ang[i] = (RoundToNearest(ang[i] / 90.0) * 90.0)/* + 90.0*/;
+			if(block.Rotate)
+			{
+				wblock.Ang[i] = (RoundToNearest(ang[i] / 90.0) * 90.0);
+			}
+			else
+			{
+				wblock.Ang[i] = -90.0;
+			}
 		}
-		else if(i == 1)
+		else if(block.Rotate > 1)
 		{
-			wblock.Ang[i] = -90.0;
+			wblock.Ang[i] = (RoundToNearest(ang[i] / 90.0) * 90.0) + 180.0;
 		}
 	}
 	
@@ -1573,6 +1628,40 @@ void PlaceBlock(int client)
 	CallBlockNotice(wblock.Pos, true);
 	
 	ClientCommand(client, "playgamesound minecraft/stone1.mp3");
+}
+
+void InteractBlock(int client)
+{
+	if(World)
+	{
+		int entity = GetClientAimTarget(client, false);
+		if(IsValidEntity(entity))
+		{
+			int id = World.FindValue(EntIndexToEntRef(entity), WorldBlock::Ref);
+			if(id != -1)
+			{
+				static WorldBlock wblock;
+				World.GetArray(id, wblock);
+				
+				static float pos1[3], pos2[3];
+				GetClientEyePosition(client, pos1);
+				GetEntPropVector(entity, Prop_Send, "m_vecOrigin", pos2);
+				if(GetVectorDistance(pos1, pos2) < CvarRange.FloatValue + (CvarModel.FloatValue*CvarSize.FloatValue/2.0))
+				{
+					static Block block;
+					Blocks.GetArray(wblock.Id, block);
+					if(block.OnInteract != INVALID_FUNCTION)
+					{
+						Call_StartFunction(null, block.OnInteract);
+						Call_PushCell(id);
+						Call_PushCell(entity);
+						Call_PushCell(client);
+						Call_Finish();
+					}
+				}
+			}
+		}
+	}
 }
 
 void SaveWorld(int client, char filepath[PLATFORM_MAX_PATH], int time)
@@ -1656,7 +1745,7 @@ void SaveWorld(int client, char filepath[PLATFORM_MAX_PATH], int time)
 	}
 
 	Block block;
-	WorldBlock wblock;
+	static WorldBlock wblock;
 	int length = World.Length;
 	for(int i; i<length; i++)
 	{
@@ -1829,7 +1918,7 @@ Function KvGetFunction(Handle kv, const char[] key, Function defvalue=INVALID_FU
 
 void CallBlockNotice(int pos[3], bool create)
 {
-	WorldBlock wblock;
+	static WorldBlock wblock;
 	int length = World.Length;
 	for(int i; i<length; i++)
 	{

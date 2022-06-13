@@ -18,7 +18,7 @@ public void Notice_Sand(int index, int entity, PosOffset offset, bool created)
 			RequestFrame(Sand_FrameMove, EntIndexToEntRef(entity));
 		}
 		
-		WorldBlock wblock;
+		static WorldBlock wblock;
 		World.GetArray(index, wblock);
 		wblock.Flags = 0;
 		World.SetArray(index, wblock);
@@ -35,10 +35,10 @@ public void Sand_FrameCheck(int ref)
 		int id = World.FindValue(ref, WorldBlock::Ref);
 		if(id != -1)
 		{
-			WorldBlock wblock;
+			static WorldBlock wblock;
 			World.GetArray(id, wblock);
 			
-			WorldBlock wblock2;
+			static WorldBlock wblock2;
 			int length = World.Length;
 			for(int i; i<length; i++)
 			{
@@ -69,7 +69,7 @@ public void Sand_FrameMove(int ref)
 		int id = World.FindValue(ref, WorldBlock::Ref);
 		if(id != -1)
 		{
-			WorldBlock wblock;
+			static WorldBlock wblock;
 			World.GetArray(id, wblock);
 			
 			float spread = CvarModel.FloatValue*CvarSize.FloatValue;
@@ -102,7 +102,7 @@ public void Sand_FrameMove(int ref)
 			if(wblock.Pos[2] != z || wblock.Flags > 0)
 			{
 				bool found, changed;
-				WorldBlock wblock2;
+				static WorldBlock wblock2;
 				int length = World.Length;
 				for(int i; i != length && !found; )
 				{
@@ -172,7 +172,7 @@ public Action Sand_StartTouch(int entity, int other)
 		int id = World.FindValue(EntIndexToEntRef(entity), WorldBlock::Ref);
 		if(id != -1)
 		{
-			WorldBlock wblock;
+			static WorldBlock wblock;
 			World.GetArray(id, wblock);
 			wblock.Flags = 1;
 			World.SetArray(id, wblock);

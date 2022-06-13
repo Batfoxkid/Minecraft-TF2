@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mcinf/honey_block_side"
+	"$surfaceprop" "slime"
+}

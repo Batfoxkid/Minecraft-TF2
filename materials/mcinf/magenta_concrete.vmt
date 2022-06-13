@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mcinf/magenta_concrete"
+	"$surfaceprop" "concrete"
+}

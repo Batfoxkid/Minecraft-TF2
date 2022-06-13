@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mcinf/fire_coral_block"
+	"$surfaceprop" "plaster"
+}

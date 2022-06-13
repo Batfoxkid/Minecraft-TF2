@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mcinf/crafting_table_front"
+	"$surfaceprop" "Wood_Furniture"
+}

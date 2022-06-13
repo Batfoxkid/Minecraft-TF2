@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mcinf/wet_sponge"
+	"$surfaceprop" "mud"
+}

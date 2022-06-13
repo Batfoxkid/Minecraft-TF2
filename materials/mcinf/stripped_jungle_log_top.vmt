@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mcinf/stripped_jungle_log_top"
+	"$surfaceprop" "Wood_Solid"
+}

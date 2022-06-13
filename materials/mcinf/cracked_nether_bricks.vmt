@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mcinf/cracked_nether_bricks"
+	"$surfaceprop" "brick"
+}

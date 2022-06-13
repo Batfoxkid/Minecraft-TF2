@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mcinf/deepslate_top"
+	"$surfaceprop" "rock"
+}
