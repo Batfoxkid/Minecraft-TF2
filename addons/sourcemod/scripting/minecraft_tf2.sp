@@ -964,7 +964,7 @@ void ToolMenu(int client)
 	menu.SetTitle("Minecraft: Build\n ");
 	
 	bool creative = Creative[client];
-	bool noGrief = CvarNoGrief.BoolValue;
+	bool noGrief = (CvarNoGrief.BoolValue && !CheckCommandAccess(client, "sm_noclip", ADMFLAG_CHEATS));
 	
 	Block block;
 	char num[12], buffer[64];
