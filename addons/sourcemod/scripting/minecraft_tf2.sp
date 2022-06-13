@@ -36,6 +36,7 @@ enum struct Block
 	char Skin[4];
 	int Health;
 	int Rotate;
+	bool Grief;
 	
 	Function OnSpawn;
 	Function OnThink;
@@ -79,6 +80,7 @@ ConVar CvarFadeMinDist;
 ConVar CvarFadeMaxDist;
 ConVar CvarVote;
 ConVar CvarNoCollide;
+ConVar CvarNoGrief;
 Cookie SaveDelay;
 
 //bool BlockMoney;
@@ -133,7 +135,8 @@ public void OnPluginStart()
 	CvarVote = CreateConVar("minecraft_allvote", "0", "Allow everyone to with build tools to call a vote on world settings", _, true, 0.0, true, 1.0);
 	CvarFadeMinDist = CreateConVar("minecraft_fademindist", "3000.0", "Distance at which blocks starts fading", _, true, 0.0);
 	CvarFadeMaxDist = CreateConVar("minecraft_fademaxdist", "4000.0", "Distance at which blocks ends fading", _, true, 0.0);
-	CvarNoCollide = CreateConVar("minecraft_nocollide", "0", "Players on the same team except for the placer can walk through blocks", _, true, 0.0, true, 1.0);
+	CvarNoCollide = CreateConVar("minecraft_nocollide", "0", "Players on the same team except for the placer can walk through blocks", FCVAR_NOTIFY, true, 0.0, true, 1.0);
+	CvarNoGrief = CreateConVar("minecraft_nogrief", "0", "Standard players can't place blocks with 'grief' tag", _, true, 0.0, true, 1.0);
 
 	AutoExecConfig();
 
@@ -267,6 +270,7 @@ public void OnConfigsExecuted()
 			kv.GetString("skin", block.Skin, sizeof(block.Skin), DefaultBlock.Skin);
 			block.Health = kv.GetNum("health", DefaultBlock.Health);
 			block.Rotate = kv.GetNum("rotate", DefaultBlock.Rotate);
+			block.Grief = view_as<bool>(kv.GetNum("grief", DefaultBlock.Grief));
 			
 			block.OnSpawn = KvGetFunction(kv, "onspawn", DefaultBlock.OnSpawn);
 			block.OnThink = KvGetFunction(kv, "onthink", DefaultBlock.OnThink);
@@ -960,6 +964,7 @@ void ToolMenu(int client)
 	menu.SetTitle("Minecraft: Build\n ");
 	
 	bool creative = Creative[client];
+	bool noGrief = CvarNoGrief.BoolValue;
 	
 	Block block;
 	char num[12], buffer[64];
@@ -968,7 +973,7 @@ void ToolMenu(int client)
 	for(int i; i<length; i++)
 	{
 		Blocks.GetArray(i, block);
-		if(creative || block.Inv[client] > 0)
+		if((!noGrief || !block.Grief) && (creative || block.Inv[client] > 0))
 		{
 			count++;
 			IntToString(i, num, sizeof(num));
