@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mcinf/brown_mushroom_block"
+	"$surfaceprop" "cardboard"
+}

@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mcinf/iron_block"
+	"$surfaceprop" "metal"
+}

@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mcinf/bubble_coral_block"
+	"$surfaceprop" "plaster"
+}

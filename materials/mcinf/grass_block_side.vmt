@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mcinf/grass_block_side"
+	"$surfaceprop" "dirt"
+}

@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mcinf/beehive_front"
+	"$surfaceprop" "Wood_Box"
+}

@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mcinf/fletching_table_side"
+	"$surfaceprop" "Wood_Furniture"
+}

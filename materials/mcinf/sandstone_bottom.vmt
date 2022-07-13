@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mcinf/sandstone_bottom"
+	"$surfaceprop" "rock"
+}

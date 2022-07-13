@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mcinf/pumpkin_top"
+	"$surfaceprop" "alienflesh"
+}

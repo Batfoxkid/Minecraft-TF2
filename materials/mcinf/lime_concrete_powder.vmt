@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mcinf/lime_concrete_powder"
+	"$surfaceprop" "sand"
+}

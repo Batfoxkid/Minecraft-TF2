@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mcinf/chiseled_polished_blackstone"
+	"$surfaceprop" "rock"
+}

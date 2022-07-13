@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mcinf/emerald_block"
+	"$surfaceprop" "metal"
+}

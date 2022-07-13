@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mcinf/redstone_ore"
+	"$surfaceprop" "metal"
+}

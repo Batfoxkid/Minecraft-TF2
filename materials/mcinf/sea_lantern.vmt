@@ -1,0 +1,15 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mcinf/sea_lantern"
+	"$surfaceprop" "glass"
+	
+	"Proxies"
+	{
+		"AnimatedTexture"
+		{
+			"animatedTextureVar" "$basetexture"
+			"animatedTextureFrameNumVar" "$frame"
+			"animatedTextureFrameRate" "5"
+		}
+	}
+}

@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mcinf/cobbled_deepslate"
+	"$surfaceprop" "rock"
+}

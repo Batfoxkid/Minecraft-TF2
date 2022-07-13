@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mcinf/dark_oak_planks"
+	"$surfaceprop" "Wood_Plank"
+}

@@ -1,5 +1,0 @@
-"UnlitGeneric"
-{
-	"$basetexture"	"mcmod/sea_lantern"
-	$selfillum 1
-}
