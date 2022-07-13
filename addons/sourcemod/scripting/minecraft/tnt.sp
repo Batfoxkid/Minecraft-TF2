@@ -31,6 +31,9 @@ public void Interact_Tnt(int index, int entity, int client)
 
 public void Damage_Tnt(int index, int entity, int &attacker, int &inflictor, float &damage, int &damagetype, int &weapon, float damageForce[3], float damagePosition[3], int damagecustom)
 {
+	if((damagetype & DMG_CLUB) && CvarMeleeOnly.BoolValue)
+		return;
+	
 	if(GetEntProp(entity, Prop_Data, "m_iHealth") <= RoundToNearest(damage))
 	{
 		SetEntProp(entity, Prop_Data, "m_takedamage", 0);
@@ -177,7 +180,7 @@ public Action Tnt_Explode(Handle timer, int ref)
 				AcceptEntityInput(explosion, "Explode");
 				RemoveEntity(explosion);
 				
-				EmitSoundToAll(ExplosionSound[GetURandomInt() % sizeof(ExplosionSound)], _, SNDLEVEL_GUNFIRE, _, _, _, _, _, pos);
+				EmitSoundToAll(ExplosionSound[GetURandomInt() % sizeof(ExplosionSound)], explosion, SNDLEVEL_GUNFIRE, _, _, _, _, _, pos);
 			}
 		}
 		else
@@ -185,7 +188,7 @@ public Action Tnt_Explode(Handle timer, int ref)
 			float pos[3];
 			GetEntPropVector(entity, Prop_Send, "m_vecOrigin", pos);
 			RemoveEntity(entity);
-			EmitSoundToAll(ExplosionSound[GetURandomInt() % sizeof(ExplosionSound)], _, SNDLEVEL_GUNFIRE, _, _, _, _, _, pos);
+			EmitSoundToAll(ExplosionSound[GetURandomInt() % sizeof(ExplosionSound)], entity, SNDLEVEL_GUNFIRE, _, _, _, _, _, pos);
 		}
 	}
 	return Plugin_Continue;

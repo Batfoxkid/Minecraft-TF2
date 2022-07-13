@@ -81,6 +81,7 @@ ConVar CvarFadeMaxDist;
 ConVar CvarVote;
 ConVar CvarNoCollide;
 ConVar CvarNoGrief;
+ConVar CvarMeleeOnly;
 Cookie SaveDelay;
 
 //bool BlockMoney;
@@ -121,6 +122,9 @@ public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max
 	CreateNative("MC_CloseMenu", Native_CloseMenu);
 	CreateNative("MC_GetBlockInv", Native_GetBlockInv);
 	CreateNative("MC_SetBlockInv", Native_SetBlockInv);
+	CreateNative("MC_CreateBlock", Native_CreateBlock);
+	
+	RegPluginLibrary("minecraft_tf2");
 	return APLRes_Success;
 }
 
@@ -137,6 +141,7 @@ public void OnPluginStart()
 	CvarFadeMaxDist = CreateConVar("minecraft_fademaxdist", "4000.0", "Distance at which blocks ends fading", _, true, 0.0);
 	CvarNoCollide = CreateConVar("minecraft_nocollide", "0", "Players on the same team except for the placer can walk through blocks", FCVAR_NOTIFY, true, 0.0, true, 1.0);
 	CvarNoGrief = CreateConVar("minecraft_nogrief", "0", "Standard players can't place blocks with 'grief' tag", _, true, 0.0, true, 1.0);
+	CvarMeleeOnly = CreateConVar("minecraft_meleeonly", "0", "If only melee weapons can damage blocks", _, true, 0.0, true, 1.0);
 
 	AutoExecConfig();
 
@@ -600,6 +605,7 @@ public void CreateBlock(WorldBlock wblock, const float pos[3])
 	{
 		TeleportEntity(entity, pos, wblock.Ang, NULL_VECTOR);
 		
+		DispatchKeyValue(entity, "targetname", block.Id);
 		DispatchKeyValue(entity, "model", block.Model);
 		DispatchKeyValue(entity, "skin", block.Skin);
 		DispatchKeyValue(entity, "health", "2000000000");
@@ -684,7 +690,7 @@ public Action OnBlockDamaged(int entity, int &attacker, int &inflictor, float &d
 		}
 	}
 	
-	if(damage == 0.0)
+	if(damage == 0.0 || ((damagetype & DMG_CLUB) && CvarMeleeOnly.BoolValue))
 		return Plugin_Handled;
 	
 	bool client = (attacker > 0 && attacker <= MaxClients);
@@ -1546,15 +1552,17 @@ void PlaceBlock(int client)
 		pos[i] = cords[i] * spread + offset[i];
 	}
 	
-	static WorldBlock wblock;
-	int length = World.Length;
-	for(int i; i<length; i++)
 	{
-		World.GetArray(i, wblock);
-		if(wblock.Pos[0] == cords[0] && wblock.Pos[1] == cords[1] && wblock.Pos[2] == cords[2])
+		static WorldBlock wblock;
+		int length = World.Length;
+		for(int i; i<length; i++)
 		{
-			PrintHintText(client, "Block inside another block");
-			return;
+			World.GetArray(i, wblock);
+			if(wblock.Pos[0] == cords[0] && wblock.Pos[1] == cords[1] && wblock.Pos[2] == cords[2])
+			{
+				PrintHintText(client, "Block inside another block");
+				return;
+			}
 		}
 	}
 	
@@ -1582,6 +1590,7 @@ void PlaceBlock(int client)
 		}
 	}
 	
+	WorldBlock wblock;
 	wblock.Id = Selected[client];
 	
 	if(!Creative[client])
@@ -1601,7 +1610,11 @@ void PlaceBlock(int client)
 		wblock.Pos[i] = cords[i];
 		if(i == 1)
 		{
-			if(block.Rotate)
+			if(block.Rotate == 1)
+			{
+				wblock.Ang[i] = (RoundToNearest(ang[i] / 90.0) * 90.0) + 180.0;
+			}
+			else if(block.Rotate > 1)
 			{
 				wblock.Ang[i] = (RoundToNearest(ang[i] / 90.0) * 90.0);
 			}
@@ -2060,5 +2073,99 @@ public any Native_SetBlockInv(Handle plugin, int params)
 	
 	block.Inv[client] = GetNativeCell(3);
 	Blocks.SetArray(index, block);
+	return true;
+}
+
+public any Native_CreateBlock(Handle plugin, int params)
+{
+	Block block;
+	int length = sizeof(block.Id);
+	GetNativeStringLength(1, length);
+	
+	char[] id = new char[++length];
+	GetNativeString(1, id, length);
+	
+	int index = GetBlockOfId(id, block);
+	if(index == -1)
+		return false;
+	
+	float pos[3], ang[3];
+	GetNativeArray(2, pos, 3);
+	GetNativeArray(3, ang, 3);
+	
+	float spread = CvarModel.FloatValue*CvarSize.FloatValue;
+	
+	float offset[3];
+	GetBlockOffset(offset);
+	
+	int cords[3];
+	for(int i; i<3; i++)
+	{
+		cords[i] = RoundToNearest((pos[i] - offset[i]) / spread);
+		pos[i] = cords[i] * spread + offset[i];
+	}
+	
+	{
+		static WorldBlock wblock;
+		length = World.Length;
+		for(int i; i<length; i++)
+		{
+			World.GetArray(i, wblock);
+			if(wblock.Pos[0] == cords[0] && wblock.Pos[1] == cords[1] && wblock.Pos[2] == cords[2])
+			{
+				CallBlockNotice(wblock.Pos, false);
+				World.Erase(i);
+				if(wblock.Ref != INVALID_ENT_REFERENCE)
+				{
+					i = EntRefToEntIndex(wblock.Ref);
+					if(i != INVALID_ENT_REFERENCE)
+						RemoveEntity(i);
+				}
+				break;
+			}
+		}
+	}
+	
+	WorldBlock wblock;
+	wblock.Id = index;
+	
+	for(int i; i<3; i++)
+	{
+		wblock.Pos[i] = cords[i];
+		if(i == 1)
+		{
+			if(block.Rotate == 1)
+			{
+				wblock.Ang[i] = (RoundToNearest(ang[i] / 90.0) * 90.0) + 180.0;
+			}
+			else if(block.Rotate > 1)
+			{
+				wblock.Ang[i] = (RoundToNearest(ang[i] / 90.0) * 90.0);
+			}
+			else
+			{
+				wblock.Ang[i] = -90.0;
+			}
+		}
+		else if(block.Rotate > 1)
+		{
+			wblock.Ang[i] = (RoundToNearest(ang[i] / 90.0) * 90.0) + 180.0;
+		}
+	}
+	
+	wblock.Owner = GetNativeCell(4);
+	wblock.Team = GetNativeCell(5);
+	wblock.Health = block.Health;
+	if(CurrentEntities < 2030)
+	{
+		CreateBlock(wblock, pos);
+	}
+	else
+	{
+		wblock.Ref = INVALID_ENT_REFERENCE;
+	}
+	
+	World.PushArray(wblock);
+	CallBlockNotice(wblock.Pos, true);
 	return true;
 }

@@ -3,6 +3,12 @@ public Action Think_None(int entity)
 	return Plugin_Handled;
 }
 
+public int Spawn_NoCollide(int entity, int &flags)
+{
+	SetEntityCollisionGroup(entity, 27);
+	return 0;
+}
+
 public int Spawn_Light(int entity, int &flags)
 {
 	AttachLight(entity);
