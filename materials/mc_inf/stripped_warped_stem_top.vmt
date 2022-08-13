@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mc_inf/stripped_warped_stem_top"
+	"$surfaceprop" "Wood_Solid"
+}

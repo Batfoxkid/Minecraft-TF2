@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mc_inf/deepslate_gold_ore"
+	"$surfaceprop" "rock"
+}

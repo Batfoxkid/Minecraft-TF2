@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mc_inf/coal_ore"
+	"$surfaceprop" "rock"
+}

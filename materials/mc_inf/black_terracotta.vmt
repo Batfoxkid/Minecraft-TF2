@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mc_inf/black_terracotta"
+	"$surfaceprop" "rock"
+}

@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mc_inf/furnace_front_on"
+	"$surfaceprop" "rock"
+}

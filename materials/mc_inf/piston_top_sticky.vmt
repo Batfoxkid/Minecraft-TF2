@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mc_inf/piston_top_sticky"
+	"$surfaceprop" "slime"
+}

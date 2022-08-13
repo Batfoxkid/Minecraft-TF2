@@ -1,6 +1,0 @@
-"VertexlitGeneric"
-{
-	"$basetexture" "mcinf/yellow_stained_glass"
-	"$surfaceprop" "glass"
-	"$translucent" 1
-}

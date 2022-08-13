@@ -1,6 +1,0 @@
-"VertexlitGeneric"
-{
-	"$basetexture" "mcinf/dirt"
-	"$surfaceprop" "dirt"
-	"$allowdiffusemodulation" 0
-}

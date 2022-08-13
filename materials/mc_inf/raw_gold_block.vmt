@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mc_inf/raw_gold_block"
+	"$surfaceprop" "metal"
+}

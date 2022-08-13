@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mc_inf/smooth_stone_slab_side"
+	"$surfaceprop" "rock"
+}

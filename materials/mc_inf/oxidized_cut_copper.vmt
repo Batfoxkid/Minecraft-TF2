@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mc_inf/oxidized_cut_copper"
+	"$surfaceprop" "metal"
+}

@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mc_inf/nether_wart_block"
+	"$surfaceprop" "bloodyflesh"
+}
