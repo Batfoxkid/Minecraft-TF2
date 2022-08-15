@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mc_inf/dispenser_front_vertical"
+	"$surfaceprop" "rock"
+}

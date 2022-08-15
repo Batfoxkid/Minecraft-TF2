@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mc_inf/bone_block_top"
+	"$surfaceprop" "Wood_Solid"
+}

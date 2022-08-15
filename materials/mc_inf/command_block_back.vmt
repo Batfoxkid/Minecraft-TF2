@@ -1,0 +1,14 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mc_inf/command_block_back"
+	
+	"Proxies"
+	{
+		"AnimatedTexture"
+		{
+			"animatedTextureVar" "$basetexture"
+			"animatedTextureFrameNumVar" "$frame"
+			"animatedTextureFrameRate" "10"
+		}
+	}
+}

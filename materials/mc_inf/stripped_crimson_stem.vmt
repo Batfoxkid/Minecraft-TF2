@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mc_inf/stripped_crimson_stem"
+	"$surfaceprop" "Wood_Solid"
+}

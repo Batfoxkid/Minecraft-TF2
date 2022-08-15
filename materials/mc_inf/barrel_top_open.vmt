@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mc_inf/barrel_top_open"
+	"$surfaceprop" "Wood_Crate"
+}

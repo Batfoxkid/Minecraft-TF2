@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mc_inf/soul_soil"
+	"$surfaceprop" "dirt"
+}

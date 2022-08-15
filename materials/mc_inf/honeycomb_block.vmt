@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mc_inf/honeycomb_block"
+	"$surfaceprop" "alienflesh"
+}

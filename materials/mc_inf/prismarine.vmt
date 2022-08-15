@@ -1,0 +1,14 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mc_inf/prismarine"
+	"$surfaceprop" "rock"
+	
+	"Proxies"
+	{
+		"EntityRandom"
+		{
+			"scale" "3"
+			"resultVar" "$frame"
+		}
+	}
+}

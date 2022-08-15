@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mc_inf/ancient_debris_side"
+	"$surfaceprop" "gravel"
+}

@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mc_inf/dirt_path_top"
+	"$surfaceprop" "grass"
+}

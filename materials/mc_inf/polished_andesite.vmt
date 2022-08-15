@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mc_inf/polished_andesite"
+	"$surfaceprop" "rock"
+}

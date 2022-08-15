@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mc_inf/grass_block_snow"
+	"$surfaceprop" "snow"
+}

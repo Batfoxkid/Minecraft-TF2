@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mc_inf/deepslate_bricks"
+	"$surfaceprop" "brick"
+}

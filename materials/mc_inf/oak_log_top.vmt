@@ -1,0 +1,5 @@
+"VertexlitGeneric"
+{
+	"$basetexture" "mc_inf/oak_log_top"
+	"$surfaceprop" "Wood_Solid"
+}
